@@ -49,7 +49,7 @@ ALLOW = {
     'sote-patch/docs/': _GAME, 'sote-patch/src/hang.c': _GAME, 'sote-patch/src/lock.c': _GAME,
     'sote-patch/src/train.c': _GAME, 'sote-patch/src/core.c': _GAME, 'sote-patch/src/cheats.c': _GAME,
     'sote-patch/src/game.h': _GAME, 'sote-patch/src/common.h': _GAME,
-    'sote-patch/README.md': _GAME, 'CLAUDE.md': _GAME,
+    'sote-patch/README.md': _GAME, 'CLAUDE.md': _GAME, 'README.md': _GAME,
 }
 
 
