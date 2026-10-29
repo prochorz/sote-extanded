@@ -1,0 +1,4 @@
+numpy
+pillow
+scipy         # pose/ (inverse kinematics)
+capstone      # disasm.py

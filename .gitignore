@@ -1,0 +1,9 @@
+/local/
+/plans/
+.venv/
+__pycache__/
+.DS_Store
+.claude/scheduled_tasks.lock
+.claude/settings.local.json
+.deepcode/
+*.pkl.png
