@@ -50,6 +50,9 @@ def check(name, ok, detail=''):
 
 
 def report():
+    m = sys.modules.get('m64')
+    for x in (getattr(m, 'SCRIPT_ERRORS', []) if m else []):   # the script crashed: its unfinished cases are a FAIL
+        check(f'script raised no exception', False, x)
     failed = [n for n, ok in _checks if not ok]
     if not _checks:
         print('RESULT: FAIL (no checks ran: the run stopped early?)', flush=True)

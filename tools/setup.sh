@@ -40,4 +40,7 @@ step "$L/game/gall_level_stock.bin" level_blob env M64CPU=0 "$PY" level_blob.py 
 step "$L/game/falcon.bin" falcon env M64CPU=0 "$PY" falcon_asset.py "$ROM"
 step "$L/game/gall_level.bin" level_edit "$PY" gallrun/level_edit.py          # (needs falcon.bin)
 step "$L/game/gall_run.bin" gall_run env M64CPU=0 M64HANG=0 M64MAXSEC=0 "$PY" gallrun/gall_asset.py "$ROM" # (M64HANG=0: ~100 s of work after the dumps, emulator idle)
+step "$L/game/cut13.bin" cut13 env M64CPU=0 "$PY" luke/luke_portrait.py --dump "$ROM"   # (needs play.st: Cut 13's RAM, Luke's HUD portrait)
+step "$L/game/guard.bin" guard env M64CPU=0 "$PY" guard_asset.py "$ROM"                  # (needs palace.st)
+step "$L/game/palace.bin" palace_bin env M64CPU=0 "$PY" pose/melee_view.py --dump "$L/game/palace.bin"   # (palace.st's RAM: melee.py's base poses)
 echo "OK $L: states, main.bin, $(cd "$L/game" && ls | tr '\n' ' ')"

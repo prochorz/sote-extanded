@@ -3,7 +3,7 @@
 
     compose_takes.py <out.mp4> <title> <subtitle> <take dir>:<take json>:<take title> [...]
 
-Panel: take title, stick widget, A/B/Z lit while in entry['b'] (plus L/R/START/D-pad, letters
+Panel: take title, stick widget (left out for a take whose log has no input: no 'x', no 'b'), A/B/Z lit while in entry['b'] (plus L/R/START/D-pad, letters
 L R S U D, in takes that use them), a green badge while entry['hang']
 (HANGING) or entry['lock'] (LOCKED ON) is set, caption = entry['label']. Title card 2.5 s, a card
 per take, end card. All on-screen text in English. If <take json> has a .wav next to it (and the
@@ -45,6 +45,7 @@ def main():
         save(card([(ttl, 52, (255, 232, 31))]), 36)
         log = json.load(open(logf)); files = sorted(glob.glob(f'{shots}/*.png'))
         extra = any(c in ent.get('b', '') for ent in log for c, _ in EXTRA)
+        pad = any('x' in ent or 'b' in ent for ent in log)   # a take with no input at all: no stick, no buttons
         n = min(len(log), len(files)); wavf = logf[:-5] + '.wav'
         if os.path.exists(wavf):
             a, rate = aligned_audio(wavf, log, n); audio.append((idx[0], a, rate))
@@ -56,12 +57,12 @@ def main():
             while d.textlength(ttl, font=ImageFont.truetype(BOLD, sz)) > 285: sz -= 1
             d.text((x0, 30), ttl, font=ImageFont.truetype(BOLD, sz), fill=(255, 232, 31))
             cx, cy, r = 1130, 250, 90
-            d.ellipse((cx - r, cy - r, cx + r, cy + r), outline=(120, 120, 130), width=4)
-            d.line((cx - r, cy, cx + r, cy), fill=(60, 60, 70), width=2); d.line((cx, cy - r, cx, cy + r), fill=(60, 60, 70), width=2)
-            sx, sy = cx + ent['x'] / 80 * (r - 16), cy - ent['y'] / 80 * (r - 16)
-            d.line((cx, cy, sx, sy), fill=(255, 210, 60), width=6); d.ellipse((sx - 16, sy - 16, sx + 16, sy + 16), fill=(255, 210, 60))
-            d.text((cx - 24, cy + r + 8), 'stick', font=ImageFont.truetype(REG, 20), fill=(150, 150, 160))
-            for i, bn in enumerate(('A', 'B', 'Z')):       # buttons: lit while pressed
+            if pad: d.ellipse((cx - r, cy - r, cx + r, cy + r), outline=(120, 120, 130), width=4)
+            if pad: d.line((cx - r, cy, cx + r, cy), fill=(60, 60, 70), width=2); d.line((cx, cy - r, cx, cy + r), fill=(60, 60, 70), width=2)
+            sx, sy = cx + ent.get('x', 0) / 80 * (r - 16), cy - ent.get('y', 0) / 80 * (r - 16)
+            if pad: d.line((cx, cy, sx, sy), fill=(255, 210, 60), width=6); d.ellipse((sx - 16, sy - 16, sx + 16, sy + 16), fill=(255, 210, 60))
+            if pad: d.text((cx - 24, cy + r + 8), 'stick', font=ImageFont.truetype(REG, 20), fill=(150, 150, 160))
+            for i, bn in enumerate(('A', 'B', 'Z') if pad else ()):   # buttons: lit while pressed
                 bx, by = 1060 + i * 70, 400; on = bn in ent.get('b', '')
                 col = {'A': (60, 110, 230), 'B': (40, 160, 70), 'Z': (150, 150, 160)}[bn] if on else (45, 45, 55)
                 d.ellipse((bx - 24, by - 24, bx + 24, by + 24), fill=col, outline=(120, 120, 130), width=2)

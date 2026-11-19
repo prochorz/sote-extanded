@@ -305,18 +305,34 @@ int fly_jump(float dt) {
  * ship's nose is turned at AWAY_TURN onto the Star Destroyer's long axis line, then along it toward the stern (flown
  * away from the battle's middle or nose up, the view behind it lost the hull; toward the bow the hull narrows and drops;
  * the axis the principal flat axis of IMG_SD_COLL's vertices through their flat centre, sd_axis() at the battle's start; the stern
- * the end where their max z lies, the bridge tower), its height the hull's top under it (max z of the vertices within
- * AWAY_UNDER_R on the flat, every frame; none: the last one, at first the hull's top) + AWAY_HIGH, climbed or dived to at
- * most AWAY_CLIMB (the nose's pitch held within it: the turn onto the line spiked it to 61 deg): the view behind the Falcon (the game's) has the hull below it; then the jump (finale()). The way onto
- * the line: square to it till within the ship's turn radius (its pace / AWAY_TURN), then the arc of that radius that
- * meets it tangent. 1 while it runs. */
+ * the end where their max z lies, the bridge tower), its height the hull's top under it or ahead (max z of the vertices
+ * within AWAY_UNDER_R on the flat of the Falcon or of the point a pace * AWAY_HOLD_T ahead of its nose, every frame: the
+ * climb starts before a higher part is under it; none: the last one, at first the hull's top) + AWAY_HIGH, climbed or
+ * dived to at most AWAY_CLIMB (the nose's pitch held within it: the turn onto the line spiked it to 61 deg), the pitch
+ * turned at most AWAY_PITCH_RATE (each step of the aim stepped the nose): the view behind the Falcon (the game's) has the hull below it; then the jump (finale()). The way onto
+ * the line and the height: both gaps closed over AWAY_HOLD_T (square to the line while it is a pace * AWAY_HOLD_T or
+ * more away, then the heading's sideways part falls with it; the height's pitch its gap over the same distance): the
+ * tangent arc of the turn radius (its gain unbounded at the line, its side flipped each crossing) and the height asked in
+ * one frame made the nose shake, yaw about the line and pitch between the AWAY_CLIMB clamps (2026-11-05: 89 / 7
+ * reversals in 7 s near the hull). The hull top aimed at (g_away_aim) eases up to the one under it over AWAY_RISE_T
+ * (taken at once, a higher part of the hull coming under jerked the nose ~10 deg a frame), at once only when the
+ * Falcon is within AWAY_SAFE over it (a tower ahead: climbed over, not rammed), and eases down over AWAY_DROP_T (a
+ * tower left behind). 1 while it runs. */
 #define AWAY_TURN        3.0f       /* radians a second (5c D8; 1.5 took 2 of the 3 s, flown toward the battle) */
 #define AWAY_CLIMB_SIN   0.25882f   /* AWAY_CLIMB 15 deg: its sin (a 53 deg climb left the hull below the frame) */
 #define AWAY_HIGH        250.0f     /* over the hull's top under the Falcon */
 #define AWAY_UNDER_R     200.0f     /* the hull's top under it: its vertices this near on the flat */
+#define AWAY_HOLD_T      1.0f       /* seconds the line's and the height's gaps are closed over (a 90 deg turn at */
+                                    /* AWAY_TURN takes 0.52 s, half of it: the nose keeps up, no overshoot) */
+#define AWAY_DROP_T      0.5f       /* seconds the aimed hull top eases down */
+#define AWAY_RISE_T      0.5f       /* seconds the aimed hull top eases up (at once it jerked the nose ~10 deg a frame) */
+#define AWAY_SAFE        120.0f     /* a top this near under the Falcon is taken at once: no ram */
+#define AWAY_PITCH_RATE  1.0f       /* radians a second the nose pitches at most (~3 deg a frame at 20 Hz; the aim's */
+                                    /* steps jerked it ~10 deg a frame) */
 #define COLL_TRI         24         /* (gall_fly.c's: a triangle, 9 s16 vertex coordinates, 3 s16 normal) */
 float g_sd_axis[2], g_sd_mid[2], g_sd_top;   /* the hull's long axis on the flat (unit, toward the stern), its flat */
-float g_away_under;                          /* centre, its top z (probes); the top under the Falcon */
+float g_away_under;                          /* centre, its top z (probes); the top under the Falcon or ahead */
+float g_away_aim;                            /* the hull top flown over: eased to g_away_under (up at once if near) */
 void sd_axis(void) {                /* once (the hull does not move): mean, then the flat covariance's main eigenvector */
     uint32_t c = U32(GALL_RAM + IMG_SD_COLL);
     if (!c || g_sd_axis[0] != 0 || g_sd_axis[1] != 0) return;
@@ -342,15 +358,16 @@ void sd_axis(void) {                /* once (the hull does not move): mean, then
     if ((tx - mx) * ax + (ty - my) * ay < 0) l = -l;             /* (toward the stern: the top's end) */
     g_sd_axis[0] = ax / l; g_sd_axis[1] = ay / l; g_sd_mid[0] = mx; g_sd_mid[1] = my; g_sd_top = g_away_under = top;
 }
-static void sd_under(float x, float y) {   /* the hull's top within AWAY_UNDER_R of (x, y) on the flat into g_away_under */
-    uint32_t c = U32(GALL_RAM + IMG_SD_COLL);
+static void sd_under(float x, float y, float ax, float ay) {   /* the hull's top within AWAY_UNDER_R of (x, y) or of */
+    uint32_t c = U32(GALL_RAM + IMG_SD_COLL);                     /* (ax, ay) (ahead) on the flat into g_away_under */
     if (!c) return;
     uint32_t n = U32(c) * 3, tris = U32(c + 4);
     float top = -1e9f;
     for (uint32_t k = 0; k < n; k++) {
         uint32_t v = tris + COLL_TRI * (k / 3) + 6 * (k % 3);
-        float dx = (float)(int16_t)U16(v) - x, dy = (float)(int16_t)U16(v + 2) - y, z = (float)(int16_t)U16(v + 4);
-        if (dx * dx + dy * dy <= AWAY_UNDER_R * AWAY_UNDER_R && z > top) top = z;
+        float vx = (float)(int16_t)U16(v), vy = (float)(int16_t)U16(v + 2), z = (float)(int16_t)U16(v + 4);
+        float dx = vx - x, dy = vy - y, ex = vx - ax, ey = vy - ay;
+        if (z > top && (dx * dx + dy * dy <= AWAY_UNDER_R * AWAY_UNDER_R || ex * ex + ey * ey <= AWAY_UNDER_R * AWAY_UNDER_R)) top = z;
     }
     if (top > -1e9f) g_away_under = top;
 }
@@ -359,26 +376,31 @@ int fly_away(float dt) {
     uint32_t stft = g_native_ship;
     if (!valid_ptr(stft)) return 0;
     float t[3], f[3], l, c = 0, a = AWAY_TURN * dt;
-    if (g_away_t < 0) { g_away_t = 0; sd_axis(); }
+    if (g_away_t < 0) { g_away_t = 0; sd_axis(); g_away_aim = -1e9f; }
     if (g_away_t >= AWAY_T) return 0;
     g_away_t += dt;
     float x = F32(stft + 0x50), y = F32(stft + 0x54), z = F32(stft + 0x58);
     float px = -g_sd_axis[1], py = g_sd_axis[0];                 /* (the line's side: lat > 0 on +p) */
-    float lat = (x - g_sd_mid[0]) * px + (y - g_sd_mid[1]) * py, al = lat < 0 ? -lat : lat;
-    float v = F32(stft + STFT_SPEED) * NATIVE_PACE, r = v / AWAY_TURN, sn, cs;
-    if (r < 1) r = 1;
-    if (al >= r) { cs = 0; sn = 1; }                             /* (square to the line, then its tangent arc) */
-    else { cs = 1 - al / r; sn = sqrt_f(1 - cs * cs); }
-    if (lat > 0) sn = -sn;
+    float lat = (x - g_sd_mid[0]) * px + (y - g_sd_mid[1]) * py;
+    float v = F32(stft + STFT_SPEED) * NATIVE_PACE, hold = v * AWAY_HOLD_T, sn, cs;
+    if (hold < 1) hold = 1;
+    sn = -lat / hold; sn = sn > 1 ? 1 : sn < -1 ? -1 : sn;      /* (square to the line, then eased onto it) */
+    cs = sqrt_f(1 - sn * sn);
     t[0] = g_sd_axis[0] * cs + px * sn; t[1] = g_sd_axis[1] * cs + py * sn;
-    sd_under(x, y);
-    float dz = g_away_under + AWAY_HIGH - z, step = v * dt, tz = step > 1e-3f ? dz / step : 0;
+    for (int i = 0; i < 3; i++) f[i] = F32(stft + STFT_FWD + 4 * i);
+    l = len3(f); if (l < 1e-3f) return 1;
+    for (int i = 0; i < 3; i++) f[i] /= l;
+    float p0 = f[2], fh = sqrt_f(f[0] * f[0] + f[1] * f[1]);   /* (the nose's pitch sin; its flat heading: ahead) */
+    if (fh < 1e-3f) sd_under(x, y, x, y);
+    else sd_under(x, y, x + f[0] / fh * hold, y + f[1] / fh * hold);
+    float ke = dt / (g_away_aim < g_away_under ? AWAY_RISE_T : AWAY_DROP_T);
+    if (g_away_aim < -1e8f || (g_away_aim < g_away_under && z < g_away_under + AWAY_SAFE)) g_away_aim = g_away_under;
+    else g_away_aim += (g_away_under - g_away_aim) * (ke > 1 ? 1 : ke);
+    float dz = g_away_aim + AWAY_HIGH - z, tz = dz / hold;
     tz = tz > AWAY_CLIMB_SIN ? AWAY_CLIMB_SIN : tz < -AWAY_CLIMB_SIN ? -AWAY_CLIMB_SIN : tz;
     float k = sqrt_f(1 - tz * tz);
     t[0] *= k; t[1] *= k; t[2] = tz;
-    for (int i = 0; i < 3; i++) f[i] = F32(stft + STFT_FWD + 4 * i);
-    l = len3(f); if (l < 1e-3f) return 1;
-    for (int i = 0; i < 3; i++) { f[i] /= l; c += f[i] * t[i]; }
+    for (int i = 0; i < 3; i++) c += f[i] * t[i];
     if (c >= cos_r(a)) for (int i = 0; i < 3; i++) f[i] = t[i];
     else {                                                       /* (turned at most a toward it) */
         float q[3], ql;
@@ -386,9 +408,12 @@ int fly_away(float dt) {
         ql = len3(q);
         if (ql > 1e-3f) for (int i = 0; i < 3; i++) f[i] = f[i] * cos_r(a) + q[i] / ql * sin_r(a);
     }
-    if (f[2] > AWAY_CLIMB_SIN || f[2] < -AWAY_CLIMB_SIN) {       /* (the pitch held within AWAY_CLIMB all the way: */
-        float h = sqrt_f(f[0] * f[0] + f[1] * f[1]), z = f[2] > 0 ? AWAY_CLIMB_SIN : -AWAY_CLIMB_SIN;   /* the turn's */
-        float g = sqrt_f(1 - z * z);                             /*  great circle went up to 61 deg) */
+    float zmax = p0 + AWAY_PITCH_RATE * dt, zmin = p0 - AWAY_PITCH_RATE * dt;   /* (the pitch held within AWAY_CLIMB */
+    zmax = zmax > AWAY_CLIMB_SIN ? AWAY_CLIMB_SIN : zmax;       /* all the way: the turn's great circle went up to 61 */
+    zmin = zmin < -AWAY_CLIMB_SIN ? -AWAY_CLIMB_SIN : zmin;     /* deg; and turned at most AWAY_PITCH_RATE: sin of a */
+    if (f[2] > zmax || f[2] < zmin) {                            /* step <= 15 deg, the angle within 1 %) */
+        float h = sqrt_f(f[0] * f[0] + f[1] * f[1]), z = f[2] > zmax ? zmax : zmin;
+        float g = sqrt_f(1 - z * z);
         if (h < 1e-3f) { f[0] = t[0]; f[1] = t[1]; h = sqrt_f(t[0] * t[0] + t[1] * t[1]); }
         if (h > 1e-3f) { f[0] *= g / h; f[1] *= g / h; f[2] = z; }
     }

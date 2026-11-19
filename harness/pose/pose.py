@@ -1,4 +1,5 @@
-"""Pose tool: Dash's skeleton from a RAM dump, inverse kinematics for an arm, stick-figure drawing."""
+"""Pose tool: Dash's skeleton from a RAM dump, inverse kinematics for a limb (any skeleton of skel.py), stick-figure
+drawing."""
 import json, numpy as np
 from scipy.optimize import least_squares
 from PIL import Image, ImageDraw
@@ -28,19 +29,29 @@ def read_pose(dump, block, frame_idx=None):
     return P
 HANG = read_pose(DUMP, BLK, 0)
 def copy(P): return {i: list(v) for i, v in P.items()}
-def solve_arm(P, side, target, elbow_dir, w_reg=0.02):
-    """Move shoulder+forearm(+hand z) so the hand node reaches target; elbow pushed toward elbow_dir."""
-    sh, fo, ha = (5, 4, 3) if side == 'l' else (8, 7, 6)
+def solve_limb(P, bones, target, bend_dir, w_reg=0.02, sk=None, w_dir=8.0):
+    """Inverse kinematics for a 3-bone limb (upper, lower, end) of skeleton sk (default Dash's): the upper and lower
+    bones' angles moved so the end node reaches target (model frame); the middle joint pushed toward bend_dir."""
+    sk = sk or SK
+    sh, fo, ha = bones
     x0 = np.array(P[sh][:3] + P[fo][:3])
     def f(x):
         Q = copy(P); Q[sh][:3] = list(x[:3]); Q[fo][:3] = list(x[3:6])
-        W = SK.world(Q)
+        W = sk.world(Q)
         e = pos(W, ha) - target
         el = pos(W, fo) - pos(W, sh); el /= np.linalg.norm(el) + 1e-9
-        return np.concatenate([e, 8 * (el - elbow_dir) , w_reg * (x - x0)])
+        return np.concatenate([e, w_dir * (el - bend_dir) , w_reg * (x - x0)])
     x = least_squares(f, x0).x
     Q = copy(P); Q[sh][:3] = list(x[:3]); Q[fo][:3] = list(x[3:6])
     return Q
+def solve_arm(P, side, target, elbow_dir, w_reg=0.02, sk=None, w_dir=8.0):
+    """Move shoulder+forearm so the hand node reaches target; elbow pushed toward elbow_dir (sk: Dash's by default)."""
+    sk = sk or SK
+    return solve_limb(P, sk.ARMS[side], target, elbow_dir, w_reg, sk, w_dir)
+def solve_leg(P, side, target, knee_dir, w_reg=0.02, sk=None, w_dir=8.0):
+    """Move thigh+shin so the foot node (the ankle) reaches target; knee pushed toward knee_dir."""
+    sk = sk or SK
+    return solve_limb(P, sk.LEGS[side], target, knee_dir, w_reg, sk, w_dir)
 def draw(P, path, title=''):
     W = SK.world(P); img = Image.new('RGB', (520, 300), 'white'); d = ImageDraw.Draw(img)
     for view, ox in ((0, 130), (1, 390)):     # 0: from behind (x, z), 1: side (y, z), wall at -y

@@ -97,7 +97,7 @@ typedef void (*load_fn)(int);
 
 /* The mission is a sub-level of its own, LEVEL_GALL. The game finds a sub-level's
  * blob through three tables in the boot segment (docs/reverse-engineering.md, "Sub-level data"), 32 entries each, at
- * fixed offsets from 0x80001330: they are here with a 33rd (the same offsets past the header, each array one longer;
+ * fixed offsets from 0x80001330: they are here with a 33rd and a 34th (the same offsets past the header, each array two longer;
  * the 15 instructions of the game's users that index them point here: hooks.S hook_table). Entry 32 is our blob in the
  * ROM (uncompressed: flag 0, its length), "3. A Gall Run" (the music setter 0x80006CB0 picks the track by the name's
  * first word: "3. A" is the base level's track 51, D11); gallrun_boot() copies the stock 32 before the game starts. So
@@ -108,15 +108,38 @@ typedef void (*load_fn)(int);
 #define SCREEN_SIZE      0x8001AA74 /* (w, h): asks for a new screen size when it differs */
 #define LEVEL_STATE      0x800D2558 /* u8: 2 = a load queued */
 #define LEVEL_QUEUE      0x800D255C /* s16: the queued id */
+/* A second own id, LEVEL_DUEL (duel.c): the palace's sub-level 27 blob, its rooftop arena on its first, flat floor
+ * with no gladiator and Guri in it (local/game/duel_level.bin, harness/duel/arena_blob.py), uncompressed in the ROM
+ * after the last image (build.py DUEL_LEVEL: flag 0, its length, as the Gall Run's), "11a. ..." for the palace's music
+ * (track 0x7D, measured on 33), the save's level index the palace's (8, 26's and 27's alike). The arrays are 34 long in
+ * every gallrun build (the hooks.S offsets are fixed); without the duel entry 33 stays empty and Go to level lists 33. */
+#define LEVEL_INDEX_PALACE 8        /* the stock index table's value for 26 and 27 */
 struct levels {
     uint32_t head[16];
-    uint32_t rom[LEVEL_GALL + 1];   /* +0x40 */
-    uint32_t pack[LEVEL_GALL + 1];  /* +0xC4: flag byte (1 = compressed), length */
-    char name[LEVEL_GALL + 1][64];  /* +0x148 */
+    uint32_t rom[LEVEL_DUEL + 1];   /* +0x40 */
+    uint32_t pack[LEVEL_DUEL + 1];  /* +0xC8: flag byte (1 = compressed), length */
+    char name[LEVEL_DUEL + 1][64];  /* +0x150 */
 };
 struct levels g_levels __attribute__((aligned(256))) = {
-    .rom = { [LEVEL_GALL] = GALL_LEVEL_ROM }, .pack = { [LEVEL_GALL] = GALL_LEVEL_LEN }, .name = { [LEVEL_GALL] = "3. A Gall Run (bonus)" } };
-uint8_t g_level_index[LEVEL_GALL + 1] __attribute__((aligned(4))) = { [LEVEL_GALL] = LEVEL_INDEX_AST };
+    .rom = { [LEVEL_GALL] = GALL_LEVEL_ROM,
+#if FEATURE_DUEL
+             [LEVEL_DUEL] = DUEL_LEVEL_ROM,
+#endif
+    }, .pack = { [LEVEL_GALL] = GALL_LEVEL_LEN,
+#if FEATURE_DUEL
+                 [LEVEL_DUEL] = DUEL_LEVEL_LEN,
+#endif
+    },
+    .name = { [LEVEL_GALL] = "3. A Gall Run (bonus)",
+#if FEATURE_DUEL
+              [LEVEL_DUEL] = "11a. Duel: Guri (bonus)",
+#endif
+    } };
+uint8_t g_level_index[LEVEL_DUEL + 1] __attribute__((aligned(4))) = { [LEVEL_GALL] = LEVEL_INDEX_AST,
+#if FEATURE_DUEL
+    [LEVEL_DUEL] = LEVEL_INDEX_PALACE,
+#endif
+};
 
 void gallrun_boot(void) {           /* from _start (hooks.S), before the game's main */
     const uint32_t *t = (const uint32_t *)LEVEL_TABLES;
@@ -137,20 +160,20 @@ static void finish(void) {
 static int g_pause_back;            /* frames after a pause the view is put back as it was (-1: a new start from the
                                      * pause, nothing to put back: the old load's camera entry, the screen empty) */
 
-/* The queue 0x800194DC sends ids >= 32 to the Main Menu (its stock bound kept, D12): queue 32 as it does past that
- * check: the screen size, the state byte, the id. Also the game's restart (0x800271F0's jal 0x800194DC at 0x80027854
- * goes through tramp_level_queue, D13). */
-void gall_queue(void) {
+/* The queue 0x800194DC sends ids >= 32 to the Main Menu (its stock bound kept, D12): queue an own id (32, 33) as it
+ * does past that check: the screen size, the state byte, the id. Also the game's restart (0x800271F0's jal 0x800194DC
+ * at 0x80027854 goes through tramp_level_queue, D13, for both own ids). */
+void own_queue(int id) {
     ((int (*)(int, int))SCREEN_SIZE)(0x140, 0xF0);
     *(volatile uint8_t *)LEVEL_STATE = 2;
-    U16(LEVEL_QUEUE) = LEVEL_GALL;
+    U16(LEVEL_QUEUE) = id;
 }
 
 void gallrun_start(void) {
     g_pause_back = -1;
     g_gallrun = 1;
     g_route = 0;
-    gall_queue();
+    own_queue(LEVEL_GALL);
 }
 
 int gallrun_active(void) {

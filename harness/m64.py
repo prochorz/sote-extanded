@@ -58,6 +58,9 @@ def dbg(ctx, level, msg):
         print('[m64]', level, msg.decode(errors='replace'), flush=True)
 
 
+
+SCRIPT_ERRORS = []   # exceptions raised by a run's script callback (testlib.report() fails on any)
+
 class Emu:
     def __init__(s, rom_path, video=os.environ.get('M64VIDEO', 'rice')):
         os.makedirs(CFG, exist_ok=True)
@@ -243,15 +246,17 @@ class Emu:
             s._last = time.monotonic()
             s.frame = n
             if s._maxvi and n > s._maxvi:
-                if n == s._maxvi + 1: print(f'LIMIT: {s._maxvi} VIs (M64MAXVI): stopped', flush=True)
+                if n == s._maxvi + 1:   # a run cut short is no pass: testlib.report() fails on it
+                    print(f'LIMIT: {s._maxvi} VIs (M64MAXVI): stopped', flush=True)
+                    SCRIPT_ERRORS.append(f'LIMIT: {s._maxvi} VIs (M64MAXVI): the run was cut short')
                 s.stop(); return
             if not s.running:
                 s.running = True
                 s.unlimit(s.unlimited)
             try:
                 script(s, n)
-            except Exception:
-                import traceback; traceback.print_exc(); s.stop()
+            except Exception as x:   # recorded: testlib.report() fails the run (a crashed case is no pass)
+                import traceback; traceback.print_exc(); SCRIPT_ERRORS.append(f'{type(x).__name__}: {x}'); s.stop()
         s._cb = cb
         core.CoreDoCommand(M64CMD_SET_FRAME_CALLBACK, 0, C.cast(cb, C.c_void_p))
         core.CoreDoCommand(M64CMD_EXECUTE, 0, None)

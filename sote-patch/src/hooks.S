@@ -125,6 +125,38 @@ _start:
     bnez $t2, 9b
     nop
 #endif
+#if FEATURE_SABER
+    # saber.c's code and data (link.ld .saber, out of the 64 KB payload): its fixed ROM slot, the ROM's last blob ->
+    # SABER_RAM, as the cheats slot above; then its .bss (link.ld .saber_bss, out of the payload's too) zeroed.
+    lui $t0, 0xA460
+    li $t1, SABER_RAM & 0x1FFFFFFF
+    sw $t1, 0($t0)              # PI_DRAM_ADDR
+    li $t1, 0x10000000 + SABER_ROM
+    sw $t1, 4($t0)              # PI_CART_ADDR
+    li $t1, SABER_LEN - 1
+    sw $t1, 0xC($t0)            # PI_WR_LEN (cart -> RAM)
+8:  lw $t2, 0x10($t0)           # PI_STATUS: DMA/IO busy
+    andi $t2, $t2, 3
+    bnez $t2, 8b
+    nop
+    ori $t1, $zero, 2           # clear the DMA-complete interrupt
+    sw $t1, 0x10($t0)
+    li $t0, SABER_RAM           # the DMA wrote RAM behind the data cache: drop stale lines
+    li $t1, SABER_RAM + SABER_LEN
+9:  cache 0x11, 0($t0)          # Hit_Invalidate_D
+    addiu $t0, $t0, 16
+    sltu $t2, $t0, $t1
+    bnez $t2, 9b
+    nop
+    la $t0, _saber_bss_start    # .saber_bss is not in the ROM image: zero it
+    la $t1, _saber_bss_end
+    b 3f
+    nop
+0:  sw $zero, 0($t0)
+    addiu $t0, $t0, 4
+3:  bne $t0, $t1, 0b
+    nop
+#endif
 #if FEATURE_FALCON
     # Falcon model image (build.py appends it after the payload): ROM -> FALCON_RAM. No other
     # DMA runs yet: the boot stub's one has finished and the game has not started.
@@ -173,6 +205,75 @@ _start:
     bnez $t2, 7b
     nop
 #endif
+#if FEATURE_GUARD
+    # The guard image (the Look row's meshes, guard.c), after the Gall Run's blobs: ROM -> GUARD_RAM, same way.
+    lui $t0, 0xA460
+    li $t1, GUARD_RAM & 0x1FFFFFFF
+    sw $t1, 0($t0)
+    li $t1, 0x10000000 + GUARD_ROM
+    sw $t1, 4($t0)
+    li $t1, GUARD_LEN - 1
+    sw $t1, 0xC($t0)
+10: lw $t2, 0x10($t0)
+    andi $t2, $t2, 3
+    bnez $t2, 10b
+    nop
+    ori $t1, $zero, 2
+    sw $t1, 0x10($t0)
+    li $t0, GUARD_RAM
+    li $t1, GUARD_RAM + GUARD_LEN
+11: cache 0x11, 0($t0)
+    addiu $t0, $t0, 16
+    sltu $t2, $t0, $t1
+    bnez $t2, 11b
+    nop
+#endif
+#if FEATURE_GURI
+    # The Guri image (her meshes on a palace guard's bones, guri.c), after the guard image: ROM -> GURI_RAM, same way.
+    lui $t0, 0xA460
+    li $t1, GURI_RAM & 0x1FFFFFFF
+    sw $t1, 0($t0)
+    li $t1, 0x10000000 + GURI_ROM
+    sw $t1, 4($t0)
+    li $t1, GURI_LEN - 1
+    sw $t1, 0xC($t0)
+12: lw $t2, 0x10($t0)
+    andi $t2, $t2, 3
+    bnez $t2, 12b
+    nop
+    ori $t1, $zero, 2
+    sw $t1, 0x10($t0)
+    li $t0, GURI_RAM
+    li $t1, GURI_RAM + GURI_LEN
+13: cache 0x11, 0($t0)
+    addiu $t0, $t0, 16
+    sltu $t2, $t0, $t1
+    bnez $t2, 13b
+    nop
+#endif
+#if FEATURE_MELEE
+    # The combo's image (Guri's and the player's blocks, its tables, melee.c), after the Guri image: ROM -> MELEE_RAM.
+    lui $t0, 0xA460
+    li $t1, MELEE_RAM & 0x1FFFFFFF
+    sw $t1, 0($t0)
+    li $t1, 0x10000000 + MELEE_ROM
+    sw $t1, 4($t0)
+    li $t1, MELEE_LEN - 1
+    sw $t1, 0xC($t0)
+14: lw $t2, 0x10($t0)
+    andi $t2, $t2, 3
+    bnez $t2, 14b
+    nop
+    ori $t1, $zero, 2
+    sw $t1, 0x10($t0)
+    li $t0, MELEE_RAM
+    li $t1, MELEE_RAM + MELEE_LEN
+15: cache 0x11, 0($t0)
+    addiu $t0, $t0, 16
+    sltu $t2, $t0, $t1
+    bnez $t2, 15b
+    nop
+#endif
     addiu $sp, $sp, -0x20
     sw $ra, 0x1C($sp)
     la $a0, hook_table
@@ -186,7 +287,7 @@ _start:
     addiu $a0, $a0, 8
 2:
 #if FEATURE_GALLRUN
-    jal gallrun_boot            # the sub-level tables' stock 32 entries into ours (33: the Gall Run is 32)
+    jal gallrun_boot            # the sub-level tables' stock 32 entries into ours (34: the Gall Run 32, the duel 33)
     nop
 #endif
     lw $ra, 0x1C($sp)
@@ -299,6 +400,18 @@ hook_table:
     .word 0x8009C5F8
     jal tramp_gun
 #endif
+#if FEATURE_SABER
+    # The Humn weapon code's C-up: jal 0x8006E410(humn, 1), the game's weapon cycle (delay slot addiu a1, 1 kept).
+    # saber_cycle runs it, then with the Look on Luke steps into the saber (id 6) where the cycle comes to the laser.
+    .word 0x80072798
+    jal saber_cycle
+#endif
+#if FEATURE_GUARD
+    # Humn draw method 0x8007A118: jal 0x8000FE48 copying +0x208 into his placement node (delay slot
+    # addiu a1, s0, 0x208): guard_place lowers the drawn figure after the copy (the Look's drop).
+    .word 0x8007A134
+    jal tramp_look_place
+#endif
 #if FEATURE_GALLRUN || FEATURE_CHEATS
     # Pad update: jal 0x800C04D4 reading the controllers' raw data (delay slot sets a0). Gall Run
     # stage 1 takes the stick before the game decodes it (the turret and its camera stay put); Cheats'
@@ -321,17 +434,17 @@ hook_table:
     # back at 0x8009BF44.
     .word 0x8009BF3C
     jal tramp_sky_guns
-    # The sub-level tables' users: base g_levels (gallrun.c, 33 entries: the
-    # Gall Run is 32) instead of 0x80001330, flags at +0xC4 and names at +0x148 (one entry more each). The queue's
-    # bound (0x80019504 slti 0x20) stays stock (D12): gallrun_start() queues 32 itself. Each lui is followed by its %lo.
+    # The sub-level tables' users: base g_levels (gallrun.c, 34 entries: the
+    # Gall Run is 32, the duel 33) instead of 0x80001330, flags at +0xC8 and names at +0x150 (two entries more each). The
+    # queue's bound (0x80019504 slti 0x20) stays stock (D12): own_queue() queues 32 / 33 itself. Each lui is followed by its %lo.
     .word 0x800192DC            # 0x80019294, the load: lui t0, 0x8000
     lui $t0, %hi(g_levels)
     .word 0x800192E8            # addiu t0, t0, 0x1330
     addiu $t0, $t0, %lo(g_levels)
     .word 0x80019300            # lw v1, 0xC0(v0): flags[id]
-    lw $v1, 0xC4($v0)
+    lw $v1, 0xC8($v0)
     .word 0x80019314            # lw t9, 0xC0(t8): flags[LEVEL_ID]
-    lw $t9, 0xC4($t8)
+    lw $t9, 0xC8($t8)
     .word 0x800193CC            # 0x800193A4, enter: lui t8, 0x8000
     lui $t8, %hi(g_levels + 0x40)
     .word 0x800193DC            # lw t8, 0x1370(t8): roms[id]
@@ -341,13 +454,13 @@ hook_table:
     .word 0x8001944C            # addiu t4, t4, 0x1330
     addiu $t4, $t4, %lo(g_levels)
     .word 0x80019454            # addiu t3, t2, 0x140: names[id]
-    addiu $t3, $t2, 0x148
+    addiu $t3, $t2, 0x150
     .word 0x800194A8            # 0x800194A8, the name getter: lui v1, 0x8000
     lui $v1, %hi(g_levels)
     .word 0x800194AC            # addiu v1, v1, 0x1330
     addiu $v1, $v1, %lo(g_levels)
     .word 0x800194C8            # addiu v0, v0, 0x140: names[id]
-    addiu $v0, $v0, 0x148
+    addiu $v0, $v0, 0x150
     .word 0x8001950C            # lui t7, 0x8000
     lui $t7, %hi(g_levels)
     .word 0x80019518            # addiu t7, t7, 0x1330
@@ -374,6 +487,45 @@ hook_table:
     # health + rate x frame time; in the Gall Run (LEVEL_ID 32) it is skipped. The delay slot (lh t6) runs as before.
     .word 0x80082494
     j tramp_tower_heal
+#endif
+#if FEATURE_DUEL
+    # The Trop's bolt spawn in its shot function 0x800B1560: jal 0x80031FE0(dir matrix, pos, sector, ..., owner = the
+    # 9th argument at sp + 0x20); its delay slot (sw t8, 0x1C(sp): the 8th argument) runs as before. Guri's on the duel
+    # (g_guri_trop, LEVEL_ID 33) goes to duel_fire instead, any other Trop's bolt to the game's spawn.
+    .word 0x800B1EB4
+    jal tramp_trop_fire
+    # The Humn's 'shot' case: jal 0x800732D4(humn, amount, 0, flash = 1 in the delay slot). Through duel_hit (duel.c):
+    # Guri's ring hits' tint blue (33 only); the damage itself as the game's, every other hit as before.
+    .word 0x8007AE70
+    jal tramp_duel_dmg
+    # Guri's class of her own on 33 (duel.c g_guri, tag 'Guri', the Trop's methods). The Trop update writes its object's
+    # tag back to 'Trop' after its 'xxxx' for the touch search: its three paths (lui t7, 'Tr' at 0x800B3D50 / 0x800B3DD0
+    # in branch delay slots, 0x800B3E64) all reach ori t7, 'op' at 0x800B3E68, sw t7, 0(s0) at 0x800B3E6C. Both run in
+    # tramp_trop_tag ('Guri' for g_guri), back at 0x800B3E70.
+    .word 0x800B3E68
+    j tramp_trop_tag
+    .word 0x800B3E6C
+    nop
+    # The compares of a shot's sender tag with 'Trop' (lui at / ori at / a branch on it): 'Guri' passes as 'Trop'.
+    # The Humn's damage scale (0x8007AD60: t9 the sender's tag; equal: addiu v1, 1 at 0x8007AD70); the j's delay slot
+    # (the ori) harmless.
+    .word 0x8007AD60
+    j tramp_tag_scale
+    # The Humn's handler (0x80078B78: v0 the tag; bnel v0, at, 0x80078BD8 with lui at, 0x426F in its slot).
+    .word 0x80078B78
+    j tramp_tag_humn
+    # The Trop's messages method, its friendly checks: 0x800B5B60 bne v1, at ('Trop' since 0x800B5B40), 0x800B5BA4 (its
+    # delay slot addiu t2, s0, 0x50 runs as before); 0x800B5C40 lui / ori, bnel v1, at, 0x800B5C78 (lw t6, 0x74(s0)).
+    .word 0x800B5B60
+    j tramp_tag_fr1
+    .word 0x800B5C40
+    j tramp_tag_fr2
+    # The Trop's messages method, its 'shot' case: lw v0, 0x78(s0) / addiu at, zero, 5, then beq v0, at, 0x800B62A8 (a
+    # Trop in state 5, 6 or 7 ignores the shot: before its line test and the damage). Guri while duel.c's g_duel_shut
+    # leaves there too: no damage, no stagger, from any weapon (0x800B59EC is no branch target).
+    .word 0x800B59E8
+    j tramp_trop_shut
+    .word 0x800B59EC, NOP
 #endif
     # Scene frame end, after the HUD: draw the lock-on overlay.
     .word 0x800BB864
@@ -582,6 +734,31 @@ tramp_gun:
     addiu $sp, $sp, 0x20
 #endif
 
+#if FEATURE_GUARD
+    .globl tramp_look_place
+# 0x8007A134: jal 0x8000FE48(node, s0 + 0x208), delay slot already run. Copy, then guard_place(node, s0 = the
+# Humn) may lower the node. The method reloads everything it uses from 0x8007A13C on (s0 kept).
+tramp_look_place:
+    addiu $sp, $sp, -0x20
+    sw $ra, 0x1C($sp)
+    jal 0x8000FE48
+    sw $a0, 0x18($sp)
+    lw $a0, 0x18($sp)
+    jal guard_place
+    move $a1, $s0
+#if FEATURE_SABER
+    jal saber_pose              # the parry's arms over the block his update sampled, before the draw reads the nodes
+    move $a0, $s0
+#endif
+#if FEATURE_DUEL
+    jal duel_bar_name           # the duel's boss bar name, after the Humn's think wrote the bar, before the HUD's draw
+    nop
+#endif
+    lw $ra, 0x1C($sp)
+    jr $ra
+    addiu $sp, $sp, 0x20
+#endif
+
 #if FEATURE_GALLRUN
     .globl tramp_setcam
 # 0x80009648 (the camera switch, a0 the entry): gallrun_setcam(a0) nonzero: refused, else on as the game's.
@@ -652,13 +829,14 @@ tramp_tower_heal:
     nop
 
     .globl tramp_level_queue
-# 0x80027854 (in 0x800271F0): jal 0x800194DC(a0 = id). 32 (the Gall Run) -> gall_queue (gallrun.c), any other id ->
-# the game's queue (its bound kept). Both tail calls: ra is the jal's.
+# 0x80027854 (in 0x800271F0): jal 0x800194DC(a0 = id). 32 (the Gall Run) and 33 (the duel) -> own_queue(id)
+# (gallrun.c), any other id -> the game's queue (its bound kept). Both tail calls: ra is the jal's.
 tramp_level_queue:
-    addiu $at, $zero, 32
-    bne $a0, $at, 1f
+    addiu $at, $a0, -32
+    sltiu $at, $at, 2
+    beqz $at, 1f
     nop
-    j gall_queue
+    j own_queue
     nop
 1:  j 0x800194DC
     nop
@@ -681,6 +859,112 @@ tramp_queue_fin:
     j 0x800194E0
     nop
 
+#endif
+
+#if FEATURE_DUEL
+    .globl tramp_trop_fire
+# 0x800B1EB4 (0x800B1560, the Trop's shot): jal 0x80031FE0 with all its arguments set, ra 0x800B1EBC. After the call
+# the caller reads only s0 and its own stack (lwc1 f14, 0x8C(sp) in the b's delay slot, stored to the Trop's +0x84,
+# then the return), so t0 / t1 / at are free here. The owner (the game's sp + 0x20) Guri on the duel ->
+# duel_fire(trop, pos = a1, dir = a0) and back; else a tail call of the game's spawn, its arguments untouched.
+tramp_trop_fire:
+    lui $t0, 0x8014
+    lh $t0, -0x31F2($t0)        # LEVEL_ID
+    addiu $at, $zero, 33        # LEVEL_DUEL
+    bne $t0, $at, 1f
+    lw $t1, 0x20($sp)           # the owner
+    lui $t0, %hi(g_guri_trop)
+    lw $t0, %lo(g_guri_trop)($t0)
+    bne $t1, $t0, 1f
+    nop
+    addiu $sp, $sp, -0x20
+    sw $ra, 0x1C($sp)
+    move $a2, $a0
+    jal duel_fire
+    move $a0, $t1
+    lw $ra, 0x1C($sp)
+    jr $ra
+    addiu $sp, $sp, 0x20
+1:  j 0x80031FE0
+    nop
+
+    .globl tramp_duel_dmg
+# 0x8007AE70 (the Humn's message handler 0x8007A29C, case 'shot'): jal 0x800732D4 with a0 the Humn, a1 the amount
+# (float bits), a2 0, a3 1; the message is at the caller's sp + 0x1D4 (its +4 the sender, +8 the flags). A tail jump to
+# duel_hit(humn, amount, message) (duel.c: it calls the damage itself, then on 33 Guri's ring hits' tint blue). The
+# caller keeps nothing in t / f0..f19 across the call and reads nothing the damage returns.
+tramp_duel_dmg:
+    j duel_hit
+    lw $a2, 0x1D4($sp)          # the message
+
+# reg 'Trop' or 'Guri' -> yes (at is not read on either way out of these sites)
+.macro TROP_OR_GURI reg, yes
+    lui $at, 0x5472
+    ori $at, $at, 0x6F70        # 'Trop'
+    beq \reg, $at, \yes
+    lui $at, 0x4775
+    ori $at, $at, 0x7269        # 'Guri'
+    beq \reg, $at, \yes
+    nop
+.endm
+
+    .globl tramp_trop_tag, tramp_tag_scale, tramp_tag_humn, tramp_tag_fr1, tramp_tag_fr2
+# 0x800B3E68: t7 = 'Tr' << 16 on every path in, s0 the Trop object. Its tag 'Guri' when it is g_guri, else 'Trop'.
+tramp_trop_tag:
+    lui $at, %hi(g_guri)
+    lw $at, %lo(g_guri)($at)
+    bne $at, $s0, 1f
+    ori $t7, $t7, 0x6F70        # 'Trop'
+    lui $t7, 0x4775
+    ori $t7, $t7, 0x7269        # 'Guri'
+1:  sw $t7, 0($s0)
+    j 0x800B3E70
+    nop
+
+tramp_tag_scale:                # 0x8007AD60
+    TROP_OR_GURI $t9, 1f
+    j 0x8007AD74
+    nop
+1:  j 0x8007AD70
+    nop
+
+tramp_tag_humn:                 # 0x80078B78
+    TROP_OR_GURI $v0, 1f
+    j 0x80078BD8
+    lui $at, 0x426F
+1:  j 0x80078B88
+    nop
+
+tramp_tag_fr1:                  # 0x800B5B60
+    TROP_OR_GURI $v1, 1f
+    j 0x800B5BA4
+    nop
+1:  j 0x800B5B68
+    nop
+
+tramp_tag_fr2:                  # 0x800B5C40
+    TROP_OR_GURI $v1, 1f
+    j 0x800B5C78
+    lw $t6, 0x74($s0)
+1:  j 0x800B5C50
+    nop
+
+    .globl tramp_trop_shut
+# 0x800B59E8: s0 the Trop the shot is for. Guri (g_guri) while g_duel_shut -> the 'shot' case's exit 0x800B62A8; else the
+# two instructions it replaced and on at 0x800B59F0 (the beq on state 5). Scratch: at only (it is set again either way).
+tramp_trop_shut:
+    lui $at, %hi(g_guri)
+    lw $at, %lo(g_guri)($at)
+    bne $at, $s0, 1f
+    lui $at, %hi(g_duel_shut)
+    lw $at, %lo(g_duel_shut)($at)
+    beqz $at, 1f
+    nop
+    j 0x800B62A8
+    nop
+1:  lw $v0, 0x78($s0)
+    j 0x800B59F0
+    addiu $at, $zero, 5
 #endif
 
 #if FEATURE_GALLRUN || FEATURE_CHEATS

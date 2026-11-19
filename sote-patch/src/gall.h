@@ -3,7 +3,9 @@
 #define GALL_H
 
 #define LEVEL_GALL       32         /* the mission's own sub-level: the tables
-                                     * grown to 33 entries in g_levels (gallrun.c), sub-level 6 never touched */
+                                     * grown to 34 entries in g_levels (gallrun.c), sub-level 6 never touched */
+#define LEVEL_DUEL       33         /* the duel's own sub-level (duel.c): sub-level 26's blob, 26 never touched */
+void own_queue(int id);             /* queue an own id past the game's bound (gallrun.c) */
 
 #define CLASS_CHOR       0x80112A78
 #define MESH_W0          0x3064FF40u /* header word of a mesh node */

@@ -11,11 +11,17 @@ What we know about the game's code, how to run our own code inside it, and where
   read from a savestate's RAM) → `local/work/main.bin`. Level code/data are loaded at runtime; use a RAM dump for those.
 - Expansion Pak RAM (`0x80400000–0x80800000`) is unused by the game where we put the payload
   (`0x807C0000`). Fake objects for tests went to `0x807E0000`. The patch's other parts there: the Falcon model
-  `0x80500000` (~122 KB), `cheats.c`'s code and data `0x80540000` (`.cheats`, 32 KB slot), the Gall Run's code
-  `0x80600040` and its image `0x80628000`.
+  `0x80500000` (~122 KB), `cheats.c`'s code and data `0x80540000` (`.cheats`, 32 KB slot), the Look row's guard
+  image `0x80548000` (`guard.bin`, up to `0x80580000`), the Guri image `0x80580000` (`guri.bin`, up to `0x80600000`;
+  the game left `0x80548000–0x80600000` untouched on `play.st` and `palace.st` through a level load, 2026-11-06), the
+  melee image `0x805A0000` (`melee.bin`), `saber.c`'s code and data `0x805C0000` (`.saber`, 32 KB slot) and its
+  `.bss` `0x805C8000` (`.saber_bss`, up to `0x80600000`), the Gall Run's code `0x80600040` and its image `0x80628000`.
+  The payload's `.bss` follows its code from `0x807C0000` and must end before `0x807E0000`.
 - ROM after the retail 12 MB: the payload at `0xC00000` (64 KB, fixed DMA), the cheats slot `0xC10000` (32 KB,
-  always there, zeros `--without cheats`; without the Falcon after it, its last 8 bytes are the MD5 nonce), then the
-  Falcon model, the Gall Run's code + image and its level blob.
+  always there, zeros `--without cheats`; with nothing after it, its last 8 bytes are the MD5 nonce), then the
+  Falcon model, the Gall Run's code + image and its level blob, then the guard, Guri and melee images, the duel's
+  level, the saber's sounds and the saber slot (32 KB, `.saber`, the ROM's last blob, none `--without saber`; the
+  nonce after it).
 - The cheats slot `0x80540000–0x80548000` stays untouched by the game: compared word for word with the build's
   `cheatscode.bin` after 300 frames on each of 10 states (`echo` .. `fin_ours`), 0 words
   changed (`local/work/cheats_intact.py`).
@@ -63,6 +69,10 @@ All verified in a working payload (the on-foot controls patch).
 | `0x800B1DB4` (`j`) | enemy shot `0x800B1560`, `lh v0, LEVEL_ID` before the damage scale by level (delay slot `0x800B1DB8` `lui t0, 0x8011` kept) | read another id for the scale (Gall Run: 32 as 6, `tramp_dmg_level`); re-execute the `lh`, continue at `0x800B1DBC` |
 | `0x800B0680`, `0x800B2B90`, `0x800B3374` (`jal 0x800359F0`, delay slot `a0 = 4` kept) | the wampa code's secret-4 checks (see Game Secrets) | answer secret 4 (friendly wampas) without the Jedi-beaten profile: the Cheats row Friendly Wampas, `cheats_secret4` returns the game's answer OR the row; a plain C call (the sites treat t-registers as clobbered) |
 | `0x8009C790`, `0x8009C3F0`, `0x8009C5F8` (`jal 0x8000FE48`) | Stft draw method `0x8009C318`: the matrix copies into the gun nodes, the model root and the engine-glow node | move a node after the game built it (the Falcon's guns, its glow, the drawn ship's offset) |
+| `0x8007A134` (`jal 0x8000FE48`, delay slot `0x8007A138` `addiu a1, s0, 0x208` kept) | Humn draw method `0x8007A118` (`s0` the Humn): the copy of his matrix `+0x208` into his placement node `+0x24C`; after it the method reloads all it uses (only `s` and even `f20+` registers live) | move the drawn on-foot figure after the game built it: the Look's drop (`guard.c` `guard_place`, `hooks.S` `tramp_look_place`: node `+0x40` lowered, a write there holds for the draw) |
+| `0x800B1EB4` (`jal 0x80031FE0`, delay slot `sw t8, 0x1C(sp)` kept) | the Trop's shot function `0x800B1560`: its one bolt spawn, a0 the direction matrix (its `+0x30` the muzzle), a1 the place, a2 the sector, the owner Trop the 9th argument at `sp + 0x20`; after it nothing caller-saved is read | take one Trop's fire with the game's own cadence, aim, line of sight and side-step kept (the duel: Guri's bolts become Stunner rings / her Disruptor, `tramp_trop_fire`; any other owner, any other level: the game's spawn) |
+| `0x800B59E8` (`lw v0, 0x78(s0)`; `0x800B59EC` `addiu at, zero, 5`, no branch target) | the Trop messages method's `'shot'` case, its test for state 5 / 6 / 7 (exit `0x800B62A8`), before the line test and the damage; s0 the receiving Trop | make one Trop take no shot at all (no damage, no stagger, no death) by jumping to the exit (the duel: Guri while shut, `tramp_trop_shut`; scratch `at` only) |
+| `0x8007AE70` (`jal 0x800732D4`, delay slot `a3 = 1` kept) | Humn's message handler `0x8007A29C`, case `'shot'`: a0 the Humn, a1 the amount, the message at the caller's `sp + 0x1D4` (`+4` sender, `+8` flags); nothing in t / f0..f19 kept across it, its return unused | act on a hit after the game's damage (the duel: Guri's hit tint blue, `tramp_duel_dmg` → `duel_hit`) |
 
 A hook that replaces a *function entry* takes `j`, not `jal`: `jal` would set `ra` to the
 instruction after the hook, and the function's own `jr ra` would then re-enter the trampoline —
@@ -96,6 +106,21 @@ hold method pointers (search the table for a known function address to find a cl
 Decoded intent (Humn offsets): forward `0x17E`, back `0x17C`, turn `0x17A/0x178`, strafe L/R
 `0x172/0x170` (s16 flags), turn magnitude `0x160`, forward magnitude `0x15C` (floats). Rewriting these right after the game fills them
 changes movement while keeping all native physics.
+
+How the decoded forward magnitude becomes his ground speed (2026-11-12, `local/work/duel/stun/`, `duel_wl1.st`): no speed
+field and no speed constant. Each update on the ground (`0x80077BC4..0x80077E58`) his velocity `+0x98/+0x9C` is
+multiplied by the grip `0x800E0DFC` (float, 1.0 normally) × 0.8 (`0x800EBBA8`; standing × 0.9 × 0.8), then, only while
+the set_anim result `sp+0x148` is set and |v| after that friction is under 20 (`0x8000D9F0`'s result against 400.0,
+`lui 0x4079`), 3.0 × the forward magnitude is added along his facing (`lui at, 0x4008` at `0x80077D98` forward,
+`0x80077DFC` back; the strafe the same with `sp+0x160` from `0x80077E58`); the forward magnitude is × 1.25 after the
+decode. Full stick decodes 2.05: v' = 0.8 v + 7.68 while 0.8 v < 20, a mean of 24.0 u/s (the < 20 cap bounds the
+stock run); below the cap the speed is linear in the magnitude (5 × the accel). The measured ground speed
+`0x800E14B8` (= |v|) picks the run (`trot`, > 8) or the walk (`mosy`) and sets their playback rate in proportion
+(`0x80079D94..`), so a slower Luke gets the game's own slower step. The grip is set 0 after 0.3 s airborne
+(`0x8007989C`), raised back +4/s by the screen-effects update (`0x8006C96C`) and forced to 1.0 inside the control at
+`0x80077BA8` whenever the stick is pushed up / down past 0.7 or the D-pad's forward / back are held: it cannot be held
+from outside. Turning (`sp+0x160` × 80 °/s with the turn flags), the native aim and the fire `0x800737D8` do not read
+the forward magnitude. The Humn has no slow state of its own and no drawn "stunned" look.
 
 To support another player class: find its control function via the class table, find the
 call to the stick curve `0x800BA268` (decode) and the yaw-rate integration, diff RAM while
@@ -149,6 +174,15 @@ Found while researching a ledge hang (see the harness notes on recording an obje
   ?, ?, next id, kind}`. Dash's list (`0x800E0F14`): 0 `Sstn`, 1–2 `mosy`, 3 `shoo`, 5–6 `trot`,
   7–8 `trtg`, 9–10 `flyy`, 11–14 `jmpF` (air), 15 `acta`, 16 `actb`, 17–18 `trnl`/`trnr`,
   19 `crou`, 20 `shoo`, 21–22 `shfl`/`shfr`, 23 `diea`, 24 `SFid`, 25 `fall`, 26 `drwn`.
+  The kind (the last word) is 0 or 1 on the stands (`Sstn` 0, `shoo` 3 / 20, `acta`, `actb`, `SFid`) and 2 or more on
+  everything that moves him (walk, run, strafes, turns, jumps): a cheap "is this request a move" test.
+  Standing with no input his control makes no `set_anim` call at all (the stand plays on), so a hook at
+  `set_anim`'s entry is not a per-update point: use the stick decode (`0x800758A8`), which runs once every update,
+  before every `set_anim` call of the ground path (`0x800761EC..0x800767FC`) and before the friction
+  (`0x80077BC4..`). A velocity written there every update moves him by 0.72 of it standing (1.39 × 1.5 units asked
+  over 5 keys moved him 1.509; 2026-11-15, `t_saber.py flow`). The play call's `how` 5, seen in a run: on another
+  block it blends (state mode 3 on its first frame), on the block already playing it sets the frame back with no
+  blend (mode 1).
   A descriptor with frames/s 0 freezes a pose: rewriting the `jmpF` ones to `diea`, start frame
   4–5, speed 0 shows a "reaching up for the ledge" pose in the air (the first ledge-hang look; the
   hang now builds its own poses, `hang.c` + `harness/pose/`, see `sote-patch/docs/ledge-falls.md`).
@@ -162,18 +196,223 @@ Found while researching a ledge hang (see the harness notes on recording an obje
   index f − 1. The angles are about z, x, y: node rotation = (Rz(a0)·Rx(a1)·Ry(a2))ᵀ.
   `set_anim` → `0x80017344` → `0x8001700C(name, chain)` finds the block by name along the chain
   from the animation state's `+0x10` (Dash `+0x19C`).
+- **Animation format, exactly** (pseudo-C of `0x800170F0`, `0x80016DB8`, `0x800166EC`, `0x80016824`, `0x800165E0`,
+  `0x80016E28`, `0x80017344`, `0x800175B8`, `0x80017764`, checked on `palace.st`, 2026-11-07; probes
+  `local/work/melee/`). Shared by every animated object (Humn, Trop, ATST, ...).
+  - *Animation state* (Dash `+0x18C`, a Trop `+0xB8`): `+0x00` mode (1 steady, 3 blending; bit 31: dt 0 this
+    update), `+0x04` (the current header's `+0x08`), `+0x08` blend progress (s), `+0x0C` blend time (s), `+0x10` the
+    block chain, `+0x14` current block, `+0x18` the block blended to.
+  - *Block* = an instance (0x1C bytes) and its header (0x1C), then the bone entries; in the loaded level the header
+    follows its instance (`+0x1C`): `instance +0x00` → header, `+0x04` frame (float, from 1), `+0x08` speed (keys per
+    second: `play` stores the descriptor's frames/s), `+0x0C` translation factor (4.0 on the guard), `+0x10` first bone
+    entry, `+0x14` next block in the chain, `+0x18` a linked block (`play` keeps the frame when blending to it).
+    `header +0x00` tag, `+0x04`/`+0x08` 0, `+0x0C` first frame (1.0), `+0x10` last frame (float, = keys), `+0x14`
+    key count (int), `+0x18` s16 below the first frame / `+0x1A` s16 past the last: 0 wrap (loop), 1 clamp (`trDi`,
+    `diea`, `acta` `0x00010001`).
+  - *Bone entry* (0xA0) = bone instance (0x28) + bone header (0x78). Instance: `+0x00` → its header (entry
+    `+0x28`), `+0x04` key cache, `+0x08` model node (0: skipped), `+0x0C` next entry (0 ends), `+0x10..18` the angles
+    sampled this update, `+0x1C..24` the translation. Header (entry `+0x28`): flags in byte `+0x01`: `0x01` rotations
+    from tracks, `0x02` translations from tracks, `0x08` the three angles as one rotation (the guard and Dash), `0x20`
+    uniform keys; `+0x04` the rest matrix (4×4 floats); `+0x44` the key step (float 1.0: key k at frame k + 1) with
+    `0x20`, else a pointer to the keys' frame numbers; `+0x48/4C/50` rotation tracks (one float per key, degrees; a
+    null track takes the constant), `+0x54/58/5C` constant angles, `+0x60/64/68` translation tracks, `+0x6C/70/74`
+    constant translation. The bytes `+0x02..03` and the unused track words hold leftovers, not flags or pointers.
+  - *Playing*: the object's update calls `0x800170F0(state)` once: dt = `0x8018E998`; mode 1: `0x80016DB8(block,
+    +0x0C)` advances the frame by speed × dt (`0x800166EC`: wrap or clamp by `+0x18`/`+0x1A`), then per bone samples
+    the tracks (`0x80016824`: key index (frame − 1) / step, linear; angles the short way round, wrapped to ±180,
+    `0x800165E0`) and poses the node (`0x80016E28`: rest matrix, + translation × factor, then the rotation, written by
+    `0x8000FE48`). Mode 3 blends (`0x80016AC8`) until the blend time, then mode 1. Two exceptions to the short way
+    (2026-11-13, the duel's moves): on an exact key (a clamped block held on its last) `0x800165E0` returns the stored
+    angle raw, and the blend mixes the two blocks' angles linearly (from × (1 − t) + to × t, no wrap): a track stored
+    ending at 360 spins the bone a full turn back over the blend into the next block (356–391° in 0.2 s measured);
+    stored keys wrapped to (−180, 180] play the same and blend clean.
+  - *Choosing*: `play 0x80017344(state, tag, how, start frame, blend time, speed)` finds the block by tag in the
+    chain (none: nothing happens), sets its speed and frame, and cuts (how 2, or speed < 0) or blends (3, 5) to it.
+    With the block already the one blended to (`+0x18`) it returns at once for how 2 / 3 (4 / 5 only set the frame):
+    no blend on one instance, a blend is always between two instances (`0x80016AC8` mixes `+0x14`'s samples into
+    `+0x18`'s). The sampler `0x80016824(bone instance, frame, keys)` reads the tracks from each bone instance's `+0x00`
+    header; the block header (instance `+0x00`) gives only the frames, the key count and wrap / clamp: another
+    block's header written into an instance plays nothing new unless its 17 bone instances' `+0x00` are moved too (the
+    tag found by `play` is the header's, `0x8001700c`).
+    `set_anim 0x800175B8(id, flags, ctl, state)` (Dash) and `0x80017764(id, flags, ctl2, state, list)` (Trops, ATST:
+    `ctl2` {time, list index}) pick a descriptor by id and call it.
+    `play`'s start frame (2026-11-15, pseudo-C of `0x80017344`, `0x80017274`): a frame number in the block's own units
+    (from 1: key k at frame k + 1), any float, given to `0x80017274(block, start)`, which writes it to the instance's
+    `+0x04` and −1000.0 to each bone instance's `+0x24`; so a block can be started anywhere inside its keys. Two cases
+    replace it: a block already the blended-to one (`+0x18`) with how 4 / 5 has its frame set with no blend, and a
+    block whose `+0x18` link is the one playing (`state +0x14`) takes that one's frame (the start ignored). The frame
+    wraps or clamps only at the header's first / last frame (`+0x0C` / `+0x10`): nothing stops at a part of a block.
+    The blend `0x80016AC8` advances both blocks (`0x800166EC` on each) while it mixes, matches the bone instances by
+    model node (`+0x08`), writes the mixed angles and translation into the `+0x14` block's bone instances and poses
+    each node from them (`0x80016E28`); a bone whose header flag `0x10` is set on either side takes the blended-to's
+    values unmixed. So after an update the angles every node was posed from are in the `state +0x14` block's bone
+    instances (`+0x10..18`), whichever mode ran (Dash's arm and spine headers: flags `0x49`).
+  - *A Trop's*: state `+0xB8` (chain `+0xC8`, current `+0xCC`, blend-to `+0xD0`), `ctl2` `+0xD4`/`+0xD8`, list
+    `0x800E65E4[kind]`. Kind 0 (the guard) `0x800E5F00`: id 0 `trSt` (idle, 2 keys/s), 1 `trTr` (15), 3 / 2 `trSh`,
+    4 `trDi` (death, kind 10), 5 `trOu` (15); its AI calls `0x80017764` from the state switch `0x800B04B8` (state 0:
+    id 0 and the timer `+0x80` = 1.5), so an idle Trop with its timer held re-picks nothing. Trop 0's chain on
+    `palace.st`: `trOu` 21 keys, `trSh` 8, `trTr` 15, `trDi` 23 (clamped), `trSt` 30; the guard's 17 bones in `trSt`
+    order: 16 root (translation tracks), 15 pelvis, 14 spine, 13 chest, 12-11-10 right shoulder, forearm, hand (the
+    rifle), 9-8-7 the left ones, 6 head, 5-4-3 and 2-1-0 the legs (`harness/guard_asset.py` `MAP`).
+  - *A Trop's bone instances, the shared headers* (2026-11-11, sub-level 26's guards under id 33, the Trop at
+    `0x801B9730`): each Trop's blocks in its chain (`+0xC8`) are instances of its own (`0x801D7xxx`), their bone
+    instances its own, but each instance's `+0x00` points at the bone header shared by every Trop of the level (in the
+    level heap, `0x801BAAB0` .. `0x801BD7F0` for the upper arms). Every update re-poses each bone node from its
+    header's rest row (`+0x34..0x3C`, the rest matrix's translation; `0x80016E28` → `0x8000FE48`): a node's `+0x38`
+    written once is gone 2 VIs later, and over 600 VIs (walk, run, fire, a melee block) the arm nodes never left the
+    rest row. So a joint moves only by the rest row of every block the object plays: the shared header moves it on
+    every Trop, a block of one object's own (or a level where only it plays the block) on that one. Units: 2.0 node
+    units = 0.100 world (the guard's shoulder joints 1.506 apart → 1.306). Nothing in the game reads the arm nodes'
+    place: the gun and the fist follow the hand node, a Trop's shot spawns from its place plus fixed offsets
+    (`0x800B1560`).
+  - *An animation of our own on one Trop* (2026-11-07, no patch code, `local/work/melee/p4_punch.py`, stills
+    `local/run/shots/melee_punch/`): a copy of Trop 0's `trSt` block (0x38 + 17 × 0xA0 = 0xAD8 bytes) at
+    `0x80700000`, its own pointers fixed (instance → header, bone entries → their headers and the next entry), tag
+    `trPu`, 20 keys, speed 15, the left shoulder (bone 9) given new rotation tracks, linked after `trSt` in Trop 0's
+    chain and made current (`+0xB8` = 1, `+0xCC` = `+0xD0` = it) plays on Trop 0 only; Trop 4's current block stayed
+    its own `trSt`. Left shoulder angles at rest (−2.3, 31.7, 80.5): the third angle down swings the arm forward
+    (−5 at the strike), the first down (−45) brings it in front of the chest: a jab; the second angle up raises it
+    sideways. Each guard has its own nodes and its own chain, so a block of ours costs 0xAD8 bytes + 4 × keys per
+    keyed angle per guard that plays it.
+  - *Posing, measured* (2026-11-07/08, `palace.st`, `local/work/melee/fk_check.py`, `p6_diea.py`, `harness/pose/
+    melee_view.py --check`): a bone's posed node rotation (node `+0x14`) = the bone header's rest 3×3 × `rot(z, x, y)`
+    of the sampled angles, its translation = the rest row + the sampled translation × the instance's factor, on every
+    bone of the guard's `trSt` and Dash's blocks (0.0000). The guard's rests are the identity on bones 0–15 and a
+    scale on the root; Dash's are the identity except the pelvis (17: a 0.952 scale, so everything below it is 0.952 of
+    what an FK without it gives) and the model bone (18: 2.906). A block of ours whose bone headers copy the object's
+    own rests, flags (`0x01|0x08|0x20`, `0x02` with translation tracks) and constants plays exactly its angles.
+    Dash's chest and neck (9, 2) are turned again by the game after his block is sampled (the spine, 10, is not: a track
+    there holds; the angles exact, their 3×3
+    up to 0.10 off rest × rot). Where (2026-11-15, `0x8007682C..0x80076A00`, right after the animation update
+    `jal 0x800170F0` at `0x80076824`, s0 the Humn): `+0xF0`, `+0xF4`, `+0xFC` clamped to ±30, `+0x100` to ±75; then the
+    node at Humn `+0x250` (bone 2, the neck; `0x801F5970` on `palace.st`) is combined (`0x8000E3A4`) with the rotation
+    `0x8000F5C8(+0xF0, −+0xF4, +0xF8)` over its own posed matrix (read by `0x8000FEB8`) and written back by
+    `0x8000FE48`, and the node at `+0x254` (bone 9, the chest, `0x801F5778`) the same with `+0xFC`, −`+0x100`,
+    `+0x104`. That is the game's one place where a bone node is re-posed between the sampling and the draw; the only
+    `jal 0x800170F0` in the Humn code is `0x80076824`. The draw method (`0x8007A118`) runs after it: a node written
+    there (the placement node at `0x8007A134`) holds for that frame's draw.
+    Bone nodes too (2026-11-15, `palace.st`, standing and running): at `0x8007A134` a bone instance's angles
+    (`state +0x14` block, entry `+0x38 + 0xA0 k`, angles `+0x10..+0x18` = the block's sampled track values z x y in
+    degrees, to 0.000°) changed and its node re-posed by `0x80016E28(entry, the block's +0x0C value as its
+    bits)` show in that same frame's picture (the right arm raised over the trot's legs); the update re-samples every
+    node each frame, so such a write never compounds (`saber.c` `saber_pose`).
+  - *Root translation.* The guard's root x, y are root motion: the Trop moves by the change of the sampled x, y (1:1
+    world units, along its draw rotation) and the node's x, y stay 0; its z × factor × 0.25 is the height in world
+    units. Dash's model bone (18) is different: its rotation turns his whole figure about the model node's origin
+    (`diea`'s end: −89.93 about x, on his back; + about x pitches him forward: +90 face down), its sampled z sets the height of the placement node above his model
+    (`+0x38..0x40`, its parent's parent; `0x801F54A8` on `palace.st`) to his floor point + z + 0.2 (`Sstn` 2.941 →
+    3.141, `diea`'s end 0.388 → 0.588, every key of a block of ours alike), and its x, y move nothing (the node's
+    translation stays 0; held or let go his place stays): his blocks carry no root motion of their own.
+  - *Scaling a drawn figure* (2026-11-09, `palace.st`, a build with the Look row and Guri; probes
+    `local/work/scale/scale_probe.py` (RAM) and `render_test.py` (the render), logs `local/run/scale/`,
+    `local/run/look_scale/d10/`). Measures that walk the node tree in RAM (the vertices of every mesh under a node,
+    through each node's 3×3 and translation) are not what is drawn: check a size on a still. Found so far:
+    - A bone node's `+0x14` written once is the game's again at the next update (Dash's model node 2.906 → 2.777
+      written, 2.906 one VI later; the guard's root 0.2 → 0.22, 0.2): the update writes every bone node from its bone
+      header's rest × rot. The headers are per block for Dash (all 18 of his blocks: 2.906) and shared by every Trop of
+      a kind (Trop 0's `trSt` root header × 1.1 changed Trop 4's root node too).
+    - Above the bones each object has a node the animation never writes, `w0` `0xD064…`: Dash's is the one child of
+      his placement node (`0x801F9900` on `palace.st`; 3×3 0.0625, translation 0; children the model node and an empty
+      bone node), a Trop's the one child of its Dfob root (3×3 0.25; Trop 0 `0x801F91B0`, Trop 4 `0x801F92D0`). Written,
+      it stays as written (300 VIs) and the RAM walk's vertices follow it, but **the drawn figure does not**: Dash's
+      node × 0.5 every VI changed nothing on screen, and the Luke look's stills with it × 0.905 were the stills
+      unscaled pixel for pixel. The render's traversal does not go through it.
+    - The placement node (Humn `+0x24C`, `0x801F54A8` on `palace.st`; translation his floor point + the model bone's
+      z + 0.2) does scale the drawn figure (× 0.5 every VI: drawn half size), but the game writes its 3×3 again within
+      2 VIs (× 0.5 once: 1.0 two VIs later, the translation untouched). The rewrite is the draw method's copy from
+      `+0x208` (`jal 0x8000FE48` at `0x8007A134`, every draw); a write right after that copy holds for the draw (the
+      Look's drop moves the drawn soles 0.310 → 0.025 that way). Scaling with it needs that hook too; its pivot (the node's translation, above his feet) and whether the camera and melee.c's
+      reads follow it are not measured.
+    - Drawn heights from the stills (the turntable's pair mode, `local/work/scale/tops.py`; the drawn top above the
+      floor, Look 2 beside Guri at the same depth): front Luke 6.238, Guri 5.871, Dash's own 6.082; the soles (RAM
+      lowest vertex, matching the drawn rows within 1 px) Luke 0.310, Guri −0.02, own 0.189. The RAM walk of the same
+      poses (standing: Dash `SFid` key 0, a Trop `trSt` key 0) gives Dash's own 0.165–6.093, the guard look
+      0.301–6.305, the Luke look 0.301–6.223, Guri 0.016–5.941: the unscaled walk agrees with the draw (Luke 6.223 vs
+      6.238); with his `0xD064` node scaled the walk said 5.947 while 6.238 was drawn.
+  - *Off the ground the game holds `jmpF` on him: the controller's descriptor chain* (2026-11-08, `palace.st`, probe
+    `local/work/melee/r1_trace.py` over `melee_view.py --stills`, logs `local/run/melee/r1a.log`, `r1b.log`). Once he
+    is more than 2 above the floor (`+0x84 > 2`, `+0x74` bit `0x04` clear, no jetpack) the Humn control sets bit `0x04`
+    and calls `set_anim(13, 1)` (`jal` at `0x80077CC4`). Descriptor 13 (`0x800E10E8`) is `jmpF` start 30
+    (its last pose, arms and legs hanging, upright), blend 0.01, fps 0, `+0x14` 0.1, `+0x18` (duration) **0**, next id
+    **13** (itself), kind 4. Every update, before the animation update (`0x8007681C`, then `0x800170F0` at
+    `0x80076824`), `0x800176F8(ctl, state)` adds dt to the controller's time `ctl +0` and, when it passes the current
+    descriptor's `+0x18` with a next id ≥ 0, calls `set_anim(next, 2)`: flags 2 is never ignored as "the same id", so
+    13 re-asks itself every update and `play` (how 5) blends to `jmpF` (0.01 s: done in that same update). A block of
+    ours cut in from outside is therefore replaced by `jmpF` frame 30 on every update in the air and never sampled
+    (a sentinel written into its sampled angles stays; the pelvis node is rewritten to `jmpF`'s each update). On the
+    floor his descriptors have next −1 (`Sstn`) or long durations, so a block of ours stays. `+0x74` written to the
+    ground value changes nothing (the request comes from the descriptor, not the flags). Same chain: `flyy` 9/10 →
+    13 after 0.5 s, `jmpF` 11 → 12 → 13, `fall` 25 and `drwn` 26 re-ask themselves every 100 s, `SFid` 24 → `Sstn` 4
+    after 6 s (the "blend of its own" while he stands held), `shoo` 20 → 4 → 0.
+    *What shows a block of ours in the air:* the controller's current descriptor (`0x800E1328 + 4`) pointed at a
+    descriptor of ours with next id −1 (or a long `+0x18`): {id 99, `plCa`, start 10, blend 0.1, fps 0, `+0x14` 100,
+    `+0x18` 100, next −1, kind 7} at `0x807F0000`, controller time 0. Then nothing re-asks `jmpF` (389 of 390 VIs
+    current = blended-to = `plCa`, descriptor 99), and while carried (`+0x74` `0x08000044`) every node is posed from
+    the block: the model node = rest × rot(sampled) (0.000; pitched 90 on `plCa` key 9) and the pelvis node too
+    (0.000); chest and pelvis nodes 0.044 apart in height, legs 72° from straight down. Kind 7 with time below
+    `+0x14` also makes `set_anim` refuse the game's own lower-kind requests (the landing's id 14 is kind 5, the
+    walk / stand ones 0–2), as `diea` (kind 7, `+0x14` 5 s) does. Measured on a throw (`melee_view.py --video`, a second descriptor for the fall block
+    set at the release): through 100 VIs of flight, the landing and 120 VIs lying, the block stayed current with nothing
+    re-cutting it. Still: `local/run/melee_r1_carried.jpg`.
+  - *Loops and time.* A looped block's last frame equals its first (`0x800166EC` wraps by last − first), so a loop's
+    last key repeats its first. Game time (`0x8018E998`, the clock at Dash `+0xD8`) runs ~13 % slower than VIs under
+    the harness on `palace.st`: a block's progress is read off its own frame, not counted in VIs.
+  - *Dash after a knock-back.* Thrown (his velocity written once with the airborne flag), his controller puts its own
+    block back every update in the air (descriptor 13's chain, above) and `Sstn` / `shoo` on landing; to keep `diea` (or a block of ours) playing,
+    point the controller at a descriptor of ours (kind 7, next −1: *What shows a block of ours in the air*, above);
+    cutting it in again each update at the game clock's frame also works but fights the controller. Thrown at 18 units/s along a facing with vz 19, released
+    1.55 above the floor: 1.57–1.63 s in the air, 24.4–24.7 units on, peak 7.3 (the ground speed is capped at 18);
+    released 1.47 above it: 88–90 VIs = 1.34–1.35 s of game time, 24.1–24.2 units on (2026-11-08); released 4.76 above it:
+    1.49 s of game time, 26.8 units on, peak 10.5 (2026-11-08). Standing held
+    with a block of his parked (speed 0), his controller now and then starts a blend of its own (his state's mode
+    3): a check that reads his sampled angles plays the block again until the state stays steady (mode 1, current
+    and blended-to both the block).
+  - *The guard's idle sways* (2026-11-08, `palace.st`): `trSt`'s root track moves, so an idle Trop drifts by root
+    motion: y 0.13 at key 0, 0.55 over keys 5–9, back to 0.13 by key 12 (x 0.00–0.18); a block that ends on `trSt`
+    key 0's root x, y (0.004, 0.129) blends into it moving her nothing (0.02 over the 0.3 s blend), then the sway is
+    the game's.
+  - *Staging two objects close* (the preview): the camera's droid (Trop 1, the creature camera's object) and a Trop
+    push Dash out of their radius (`+0x60`, ~4 units a frame): radius 0 holds him where written. His drawn matrix
+    `+0x208` is rebuilt from `+0x14` / `+0x8C` (0/90/180/270 exact); the tags `guGr guPu guSh guLf guTh plDb plUp`
+    are in neither Trop 0's chain (`trOu trSh trTr trDi trSt`) nor Dash's (`fall diea trnr trnl shfr shfl shoo actb
+    acta flyy jmpF crou trtg mosy trot SFid Sstn`).
+  An entry never sampled yet (a block not played since it was made or copied, the game's frozen `shoo` too) holds the
+  translation offset `+0x1C..+0x24` = (0, 0, -1000); `0x80016E28` adds it, so re-posing such a node puts the bone
+  1000 below (the saber's parry did: the upper body gone for 7 frames, 2026-11-16).
+- **Dash's own animations for a fight** (2026-11-07, `local/work/melee/p3_dash.py`, stills
+  `local/run/shots/melee_p3/`): he has no hit, flinch or get-up animation; the damage `0x800732D4` only lowers
+  health, sets Humn `+0x74` bit `0x10` (read by no Humn code), flashes and grunts, and plays id 23 `diea` at 0.
+  The death starts only there: it asks `diea` once, as health drops below 1 (health written 0 starts none); a request
+  refused then (the controller on a descriptor of a higher kind, the saber's swing: kind 7) is lost, nothing asks it
+  again (2026-11-16). His
+  blocks (keys): `fall` 21, `diea` 25 (clamped; blown off his feet backward, on his back by frame ~12), `trnr` 20,
+  `trnl` 21, `shfr`/`shfl` 19, `shoo` 48, `actb` 17 and `acta` 14 (clamped: a hand reaching forward), `flyy` 36,
+  `jmpF` 36, `crou` 23, `trtg` 19, `mosy` 20, `trot` 20, `SFid` 30, `Sstn` 1. Descriptor kinds (`+0x20`): stand,
+  `shoo`, `acta`/`actb`, `SFid` 0; walks, runs, turns, `crou` 2; `flyy` 3; `jmpF` 4/5; `fall`, `drwn` 6; `diea` 7.
+  Held (position `+0x08`/`+0x50` written, velocity 0, every update) with his state `+0x18C` = 1 and `+0x1A0` =
+  `+0x1A4` = a block (frame `+0x04`, speed `+0x08` set), the controller left at the stand (`0x800E1328 + 4` =
+  `0x800E0F14`), the game asked for nothing in 4 s per animation: any of his blocks plays where he is held. A stick
+  input changes his movement state and the game asks for another id: a hold under play must keep the controller's
+  descriptor at what the game asks for.
   Model node (0x48 bytes): `+0x0C` child count, `+0x10` child list, `+0x14` 3×3 rotation,
   `+0x38` translation. Dash's skeleton (entry index): 18 model root → 17 pelvis → legs 16→15→14
   and 13→12→11, spine 10 → chest 9 → arms 8→7→6 (right: shoulder, forearm, hand) and 5→4→3
   (left), neck 2 → head 1; 0 is the root translation. Left and right are mirror images in x.
-  A node's children are bone nodes and meshes; the right hand (6) has the hand mesh and the
-  held weapon's mesh (its first word has bit `0x80`). Leaving a mesh out of the list hides it.
+  A node's children are bone nodes and meshes; the right hand (6) has the hand mesh, then the
+  held weapon's mesh, which ends up with bit `0x80` in its first word. That bit is no weapon mark: the mesh draw
+  `0x800BBBF8` sets or clears it on every drawn mesh (`w0 >> 16 == 0x3064`) from s16 `0x800E7C38`, the render state
+  the mesh drawn before left, so it follows draw order (measured on `play.st`, bone 6 w0 low byte: Dash's hand `40`,
+  weapon `c0`; weapon first, then another mesh: `40`, `e0`; another mesh, then the weapon: `60`, `c0`; the jetpack on
+  the chest, bone 9's second mesh, carries it too). Leaving a mesh out of the list hides it.
 - `set_anim`'s third argument is really the object's animation controller `{time, current
   descriptor, list, ...}` (Dash: `0x800E1328`). A request for the current id is ignored; a
   request is also refused while the current descriptor's "kind" (`+0x20`) outranks the new one
   and its time is below `+0x14` — give a borrowed pose kind 0. The game only asks for a new
   animation when its own movement state changes, so after overriding the pose, point the
-  controller's current descriptor elsewhere and call `set_anim` once yourself.
+  controller's current descriptor elsewhere and call `set_anim` once yourself. The current descriptor is `+4`: Dash
+  held in place by writing his position while the stick runs him is taken for blocked and his run stalls; writing the
+  run's descriptor (`0x800E0FC8` on `palace.st`) into `0x800E1328 + 4` each frame keeps it running
+  (`tools/video/record_guard_turntable.py MOVE=1`, 2026-11-06).
 - Dash keeps three rotation matrices (rows right/forward/up/translation): `+0x20` (translation =
   position `+0x50`), `+0x108` (the camera follows this one; translation z + 5.5) and `+0x148`
   (what the model is drawn with; translation `+0x178`). The game rewrites yaw, position and
@@ -233,20 +472,60 @@ Found while researching a ledge hang (see the harness notes on recording an obje
   other clocks play differently (the follow camera's swing). A fixed frame time: double `0x800E6B10` > 0 makes
   `0x800B8D6C` use it as the frame dt and add it to the clock.
 - Camera views (the `~~Camera` binding, L in every preset). On foot: view s16 `0x800E0EEC`
-  cycles 1 follow → 0 first person → 4 fixed "drop" camera (a tripod is placed) → 5 overhead.
+  cycles 1 follow → 0 first person → 4 fixed "drop" camera (no object placed: a HUD tripod icon) → 5 overhead.
   `0x8006A214(player, view, 0)` switches to a view exactly like the button (it also sets
   `0x800D08D0` = 1 and the camera id u32 `0x800D08A8`: 7 follow, 4 first person, 9 drop, 6 overhead).
   View 2 is the Leebo Scanner (secret #1): an overhead camera (id 6) picked by `0x8006A214`'s case 2,
   which first traces straight up (`0x800695CC` → `0x80069404`, 12 units) and falls back to view 1
   (follow) under a low ceiling; the game's trigger (block around `0x80071B50`, gated by `0x800359F0(1)`)
   holds C-right ~5 s then switches the view. The patch's Cheats toggle just calls `0x8006A214(player, 2, 0)`.
-  The drop camera (view 4, 2026-10-28): `0x8006A214` case 4 calls `0x80069648(player, player + 0x118, 20.0, 0)`
-  (places it, traces from the player, fills the block at `0x8018DD28`) and `0x80069B44(player, 1)` (the tripod
-  object), then camera entry 9. Entry 9 is type 3 in every level read (sub-level 4 and the Gall Run):
-  `+8` = `0x8018DD68`, `+0x10` the matrix it looks at. In the Gall Run, written straight from the harness (entry 9
-  on, `+0x10` the Falcon's guns' matrix, `0x8018DD58` the eye) it trailed the ship ~68 units behind it, not standing
-  still: its eye comes from the block `0x80069648` fills for the on-foot player (not traced further). The game's
-  standing camera that already works in flight is type 2 (entries 7, 8 there: eye from `+8`, looking at `+0x10`).
+  The drop camera (view 4, 2026-10-28, corrected 2026-11-08): `0x8006A214` case 4 calls
+  `0x80069648(player, player + 0x118, 20.0, 0)` (places it: traces up to 4 jittered directions from the point, then
+  `0x80009370(9, 3, 0x8018DD68, 0)` and `0x80009488(9, player + 0x108, 0)`, or `0x8018DD28` while float
+  `0x800DEB78` > 0) and `0x80069B44(player, 1)` (its update), then camera entry 9. No object is placed: the
+  camera-on-tripod picture is a HUD icon drawn while entry 9 is the active index (not traced further). Entry 9 is
+  type 3 in every level read (sub-level 4, the Gall Run, the palace): `+8` = `0x8018DD68`, the eye's matrix (the eye
+  is its translation `0x8018DD98`); `+0x10` the look matrix (`0x8018DD28` at the level start, the player's `+0x108`
+  after a placement); `0x8018DD58` is the look matrix's translation (the look point), not the eye. In the Gall Run,
+  written straight from the harness (entry 9 on, `+0x10` the Falcon's guns' matrix, `0x8018DD58` the eye) it
+  trailed the ship ~68 units behind it, not standing still. The game's standing camera that already works in flight
+  is type 2 (entries 7, 8 there: eye from `+8`, looking at `+0x10`).
+- Camera entries on foot (2026-11-08, `palace.st`, `local/work/melee/r2_entries.py`). The camera update
+  `0x8000A020` runs every frame over entries 0..9 only, each with type s16 `+4` ≠ 0 and flag `+0` set (the active
+  entry and a blend's target): place mode s16 `+6` (0 copy the `+8` matrix into the rows `+0x14..+0x53`, 1 / 2 / 3
+  other transforms of it), then for types 2, 3, 4 a look at `+0x10` (look mode s16 `+0xC`: 0 a matrix's translation,
+  1 a point; plus the offsets `+0x6C..`; type 4 adds the facing row × (1 + 40·|z|)); type 3 with place 0 writes its
+  rows back into `*+8`. Type 0 is never updated. `0x80009370(k, type, eye ptr, place)` writes `+4`, `+6`, `+8`;
+  `0x80009488(k, look ptr, look mode)` `+0x10`, `+0xC`. In the palace (player `0x801A5E90`):
+  - 0: type 1, `+8` `0x801B65A0` (not traced);
+  - 1, 2, 3: type 0, all zero: unused on foot. No game call names entry 1 by a constant (`0x80009370`,
+    `0x80009488`, `0x80009648`, `0x8000952C`); entry 2 is switched to at `0x8005F014`, entry 3 at `0x8005EC48`,
+    `0x8005F100`, `0x800995D4` and set by `0x800A8020`, `0x800AA9DC` (none ran on foot in the palace);
+  - 4: type 1, `+8` = the player's `+0x108` (first person, view 0);
+  - 5: type 1, `+8` = the player's `+0x20`, offsets (0, 0, 40, 0, −90) (`0x8000A7B0(1)`: the Leebo Scanner, view 2);
+  - 6: type 1, `+8` `0x801B8580` (overhead, view 5; `0x800695CC` re-sets it);
+  - 7: type 4, `+8` `0x8019F834` (the Doly), `+0x10` the player's `+0x108` (follow, view 1);
+  - 8: type 1, `+8` = the player's `+0x20`;
+  - 9: type 3, the drop camera (above).
+  Each frame the on-foot camera code (`0x800702DC`) copies the active index into s16 `0x8018DDE8` (7 → 1, 4 → 0,
+  9 → 4, 6 → 5, 5 → 2, 0 → 3; any other index, −1 during a blend included, leaves it), and `0x8006FFE4` runs the drop
+  camera's update `0x80069B44(player, 0)` while it is 4. So entry 9 active on foot is always the drop camera,
+  whoever switched to it. `0x80069B44` (when the player's `+0x74` bit 28 is clear) re-places entry 9 by
+  `0x80069648` (which writes its `+8` / `+0x10` back to the game's) when:
+  - `0x800DEB78` > 0 (a scripted look point), every frame;
+  - cooldown float `0x800E1428` ≤ 0 (set 1.0 s by each re-placement) and: the line from the eye `0x8018DD98` to
+    the player's `+0x138` (trace `0x800654A0`) blocked over 0.25 s (float `0x800E1424` counts it; `0x800EB600` when
+    the floor moved), or the eye farther than 30 (√min(900, (`0x800E0E9C`/4)²)) or nearer than 1.5 (a height
+    0..6 above counts 0);
+  - `0x8018DD20` ≠ 0 (at the player's `+0x118`, 20);
+  - forced by the floor (`0x800E0EE4`, set by `0x8006A13C` when the floor object's `+0x10` bit 22 is set): blocked
+    over 0.5 s (or `0x800EB5FC`) → `0x8006A214(player, view, 0)`, the view back.
+  Measured (3 s, an orbit of ours R 9 about the player, `+8` / `+0x10` our two identity matrices, blended in with
+  the game's 0x8000952C writes): entries 1, 2, 3, 8 made type 3 by those two calls' writes: index k, `0x8018DDE8`
+  stays 1, our pointers never replaced, the eye exactly ours (error 0.0000, 84 frames), no HUD icon; the blend back
+  to 7 ends on 7. The blend `0x8000952C(k, s)` holds the active index `0x800D08A8` at −1 for its `s` seconds, then
+  `0x80009648(k)` sets it (pseudo-C of `0x80009838`). Entry 9 the same way: `0x8018DDE8` = 4 one frame after the blend's end; with `0x8018DD98` also
+  written = our eye it was re-placed 0.22 s later (the blocked-line rule) and held the game's pointers 75 of 81 frames.
   The train (`HumT`) has its own: view u32 `0x8018E928` (1 behind, 0 first person, 2 overhead),
   L in the behind view also steps the distance float `0x800E53D4`; code around `0x800A87B0`,
   cameras picked with `0x80009648(id)`. `0x800A7C90(float blend)` switches to the behind view
@@ -319,7 +598,28 @@ Found while researching a ledge hang (see the harness notes on recording an obje
   lighter or heavier patch changes jump arcs and paths (tests tuned to a marginal jump broke).
 - Laser pool base pointer `0x80112E60`; new bolt direction at `+0xA0`.
 - Dash's fire function `0x800737D8`: weapon = Humn `+0xB8` (0 laser, 1 pulse cannon, 3 seeker;
-  C-up cycles), jump table `0x800EB908`. Other shots go along his flat body facing through the
+  C-up cycles), jump table `0x800EB908`. The weapon table `0x800E1338 + 12·id` (pickup bit, HUD icon element, shot
+  cost) has an entry 6 (bit −1: always held, icon element 6, cost 0) that no weapon uses; the fire function does nothing
+  with id 6 (the cost test fails, the id is past the jump table's 6 entries). The C-up cycle `0x8006E410(humn, 1)`
+  (called at `0x80072798`) steps 0, 2, 1, 3, 5, 4, 0, skipping weapons with no ammo or pickup; any other id steps to 0.
+  Set-weapon `0x8006E608(humn, id)` sets the icon and plays the switch click (0x15). The id is saved at a level's end
+  and set again at the next one's start (`saber.c` puts its id 6 there). The laser is its one `jal 0x80031FE0`, at `0x80073F14` (a0 the direction
+  matrix `sp + 0x64`, a1 the place `sp + 0x154`, a2 his sector `+0x70`, a3 5.0, then 200.0, 30.0 (the delay slot's
+  `swc1`), the damage, flags 0x60, owner him; the matrix read again after it for the muzzle flash, `0x80073F40`); inside
+  that spawn the patch's laser hook (`0x800321FC`, `lock.c` `ctl_laser`) re-aims every bolt of the player at the lock's
+  target, so a direction changed at `0x80073F14` is undone there. A Blst bolt (owner `+0x64`, live `+0x60 & 0x10000`,
+  place `+0x50`, velocity `+0x78..+0x80` at 200 u/s, the start `+0x94..+0x9C`): a bolt aimed at a Trop 9 units off hits
+  it in the frame it appears (the Trop's damage and stagger in the same game frame as the spawn), so moving the
+  target after the shot cannot make it miss; a line passing ~3.4 from a palace guard's place misses, ~2.8 still hits. Its flight (the Blst update `0x80033B7C`):
+  straight, place += velocity `+0x78` × dt every update, the life `+0x68` counting down; no homing, the direction is
+  never changed by it (the homing shots are `Misl`). The update (`local/work/saber/f_80033b7c.c`, 2026-11-16) only moves the bolt and runs its hit test
+  (`0x800330F0`); it draws nothing: a bolt whose update is skipped stays drawn where it is, unmoved, its life not
+  counted (the saber holds one at the blade that way). A palace guard's bolt (`palace.st`, 2026-11-15,
+  `local/work/saber/parry_probe.py`, log `local/run/saber_parry/p1.log`): speed `+0x74` 200, length `+0x70` 30, life
+  5.0 s, flags `0x10000`, spawned 3.75 above the shooter's feet and 2.7 ahead of it, its dir z −0.09..0 (it crosses
+  0.9..3.75 above the feet of a player 37..77 away). Its place `+0x50` is the tail and its first update sweeps the
+  whole length at once, so the head is 30 nearer than the place: from a guard 40 away the hit came 0.04 s after the
+  bolt first showed (one or two game frames), from one 77 away 0.23 s. Other shots go along his flat body facing through the
   projectile spawn `0x80064584(kind, pos, ?, vel, flags, collider, shooter)` (class `Expl`, velocity
   `+0x70`, shooter `+0x88`; pulse = kind 6, ~36-46 units/s, lives ~0.7 s ≈ 30 units). Lifetime left
   (seconds) `+0x8C`: stored at `0x80064604` from the kind table (`0x800E0370`, 60 bytes a kind, `+0x18`)
@@ -329,7 +629,51 @@ Found while researching a ledge hang (see the harness notes on recording an obje
   picked with the game's auto-aim (which skips bosses). Bosses' real health: `+0x5C4` (750 full);
   hits add to `+0x748`, which the boss update `0x800465E0` takes off it. A pulse burst does less the
   further from the AT-ST's cockpit it goes off (~60 close and steep, ~5 on its front from far).
-  IG-88's `+0x60` turns negative while he charges at Dash; dead = flag `0x20` at `+6`.
+  IG-88's `+0x60` stayed +2.5 in every run of his AI measured 2026-11-09 (his rush included: it stops 10 units off);
+  it was read negative with Dash put 3 units in front of him (`t_ig88near.py`) and at his death; dead = flag `0x20`
+  at `+6`.
+- **The `Expl` class in detail** (2026-11-10, `palace.st`, Dash's Stunner and Disruptor fired; `local/work/duel/`
+  pseudo-C `f_80064584.c`, `f_8006604c.c`, `f_8006687c.c`, `f_80065660.c`): pool `*0x80112E90`, 60 × 300 B, 5 sprite
+  types × 12 slots (the next slot of a type: s16 `0x8018DC80[type]`, taken unconditionally); `0x80064584(kind, pos,
+  dir, vel, msgflags, sector, shooter)` returns no object (v0 is a colour record on its colour paths only): the
+  spawned one is the slot that ring gave, checked by kind `+0x64` and sender `+0x88`. Kind table `0x800E0370` (0x3C a
+  kind: `+0` sprite type, `+4` scale → `+0xD4`, `+0x10` drag, `+0x14` growth → `+0x80`, `+0x18` / `+0x1C` life →
+  `+0x8C`, `+0x20` damage → `+0x84`, `+0x28` RGBA floats, `+0x38` flags → `+0x62`); the object's own fields are
+  copied at the spawn, so one shot can be changed alone (a live shot's velocity `+0x70`, three floats, and its sender
+  `+0x88` rewritten: it flies on the new course; a shot whose sender is the Humn bursts by itself (flag 0x40 contact)
+  on touching a Trop, ~4.75 from its centre, where a Trop's shot passes through the Humn). Update `0x8006604C`, flags `+0x62`: 1 moves with `+0x70` and
+  collides; 2 grows (`+0xD4 += +0xD4 · dt · +0x80`, cap 2000; the burst is the same object, flag 2 set); 0x40 on
+  contact / life end switches to the grow phase; 4 sends `'shot'` (sender, message flags `+0x68`, damage) every frame
+  to every object within `+0xD4 × 2.5` (≤ 100), 0x80 sends `'frez'` (no cap), 0x800 `'Whit'`; 8 hits the shooter too;
+  0x10 needs line of sight; 0x20 faces the camera; 0x100 draws it in the RGBA bytes `+0x124..+0x127` (the colour record
+  `+0x98` is one per slot; a tinted Disruptor shot keeps its tint through its burst); 0x4000 hides it. The area test
+  `0x80065660`: horizontal distance < the object's radius `+0x60` + R, z inside its span; candidates the sector's
+  objects, the Humn always, every `EShd`. Weapon ids (Humn `+0xB8`): 0 laser, 1 pulse, 2 flame, 3 seeker, 4 Stunner,
+  The area send (`0x80065880`) reaches only objects linked in the floor-cell lists round the shot (cell `+0x98` its
+  first object, object `+0xA0` the next): a dormant Trop with no cell (`+0xA4` 0, the cave's far wampas on
+  `echo_cave.st`) takes nothing, even moved into reach. The Trop `'shot'` case (`0x800B58D0`) takes the damage unscaled
+  (a wampa's 500 too); flag 0x100 caps it at 30 (2026-11-16).
+  5 Disruptor (ammo floats `+0xC0 + 4·id`). The Stunner: kinds 1, 2, 3 (sprite type 4, the blue rings, flat: dir
+  `0x800E1460`) at Dash, scales 0.1 / 0.2 / 0.3, growth 5.2/s, life 2.0 s; only kind 1 acts (`'frez'`, no damage).
+  A ring's sprite is one quad, its drawn half-width 1.375 × scale. The Disruptor: kind 4 (sprite type 2, scale 0.4,
+  flags `0x286D`, damage 20, life 2.2 s, then its sphere grows 2.5 s at 2.7/s to scale ~117; drawn half-width 1.365 ×
+  scale) + kind 5 (visual); its speed `0x800EB970` (70). The life end (`0x8006604C` takes dt off `+0x8C`): at ≤ 0 with
+  0x40 it clears 0x41, sets 2 and takes the grow phase's life from the kind's `+0x18` (a life written 0 bursts it on
+  its next update, where it is); without 0x40 it ends the object (`0x80064C70`, state 0), no burst. `'Whit'` is sent
+  only inside the `'shot'` area send: the update calls `0x80065880` only under flag 4, and `0x80065660` sends `'Whit'`
+  to an object only on the path that sends it `'shot'`; with 0x800 alone nothing is white. **The white flash** is no sprite: the sphere's `'Whit'` to the
+  Humn (`0x8007A364` → `0x8007AB38`) adds 1.85 · dt to the float `0x800E0DF4` (cap 0.9) each frame he is inside;
+  `0x8006C758..` draws and decays it, and while ≥ 0.5 it hurts him `((difficulty − 1) · 22.5 + 5) · dt`
+  (`0x8006C828`): the stock Disruptor's damage to Dash is all from the white. Humn's `'shot'` (`0x8007AD34`) skips the
+  damage when the message flags carry 0x40 (Dash's own shots pass 0x60), else takes the damage × (0.7 + 0.4 ·
+  (difficulty − 1)) × a random 0.7..1.0, at least 1 (`0x8007AE58`: even at damage 0). The player's screen effects
+  are the hit tint (strength `0x800E0DF0`, colour s16 × 3 `0x8018DCF8`, written by the damage at each hit: flash 1
+  orange 255 128 0, 2 green) and the white; nothing draws a hit on a body.
+  More (2026-11-16, `f_80064584.c`, `f_8006604c.c`, the saber's flash): the spawn plays no sound; its placement
+  (`0x80063E4C`) puts every object 0.05 (`0x800EB414`) from the given point toward the eye. A tinted object (0x100,
+  without 0x400 / 0x1000) is drawn in `+0x124..+0x126` with the alpha `+0x127` times a factor from its life. Kind 4
+  rewritten to flags 0x2122 (0x2000, tint, faces the camera, grows; nothing that moves, hurts, bursts or whitens),
+  scale 0.4, growth 6.0, life 0.12 s: a disc in its tint that grows to 0.5 over ~4 VIs and ends with no burst.
 - Display list head `0x80192F28` (next free Gfx); frame closed by `0x800BB630`.
 - Perspective floats at `0x80192F14`: fovy (deg), aspect, near, far — 77/1.33/0.6/200 on foot in
   Echo Base, far 250 in Suprosa, 87.75/0.2/500 on the Mos Eisley swoop.
@@ -406,7 +750,9 @@ Found while researching a ledge hang (see the harness notes on recording an obje
   = 50; 4 u32 `0x800DD2C4`; 5 `0x800732D4(Humn,'It$',1,0)` / `0x800A97E8(HumT,'It$',0)`;
   6 `0x80074CDC(Humn)` / `0x800AAA34(HumT)` / `0x800290B0(Bike)`; 7/8/9 `0x800194DC(level ±1)`;
   10 bit 0 of `0x80112824` (clear = Wall Ghost on); 11/12 floats `0x800E0DC0` / `0x800E0DC4`
-  (0.1..3); 13/14/15 bytes `0x800D2530` / `…34` / `…38` (set = off); 16 u32 `0x800D25DC` then
+  (0.1..3; Jump Power and Gravity, both 1.0 by default. Jump Power scales the on-foot launch vz: x1 vz 15, apex 4.38
+  above the floor, 76 VIs in the air; x1.4142 vz 21.2, apex 8.58; x2 vz 30, apex 16.2 (palace.st, a standing jump).
+  The game keeps the value through This Level and a death, and a landing from 3.7x the apex costs no health); 13/14/15 bytes `0x800D2530` / `…34` / `…38` (set = off); 16 u32 `0x800D25DC` then
   `0x8001AAF0()`; 17 mode u32 `0x800D0A88` 0..4 → `0x8001AA74(w,h)`; 18/19/21 fovy/aspect/far
   (`0x80192F14/18/20`) via `0x800BA444(fovy, aspect, near, far)` (≤0 keeps a value; it ignores
   calls while u32 `0x80192F38` is set, so clear it around the call and set it after: that flag
@@ -666,6 +1012,15 @@ Found while researching a ledge hang (see the harness notes on recording an obje
   the Imperial moon base Gall; hide the ship in Smuggler's Gorge; "Then I'll have to sneak in the hard way...");
   Cut 06 his "So far so good, Leebo. Looks like I go in on foot from here." and the observation tower line
   (the text in each blob, `level_blob.py` ids 11, 13).
+  Cut 11 (24, read 2026-11-05 on the stock ROM, `local/work/cut_look.py ID=24`): the "Part IV: Lair of the Dark Prince"
+  crawl, the Falcon and the Outrider flying into an Imperial City sewer tunnel and setting down, then a picture of
+  Chewbacca, Lando, Luke and Dash by the Falcon with Luke's "These sewer tunnels lead to Xizor's palace. Lando, Chewie
+  and I will search for Leia." (no line table at `*(0x8013CE30) + 0x14`; the scene holds on the picture, not ended
+  within 100 s with no input). Luke appears in the game only as 2D pictures found so far (Cut 11, the last scene,
+  Skyhook's radio portrait); the sewer and palace levels (25–27) have no class of their own for the palace guards:
+  their people are `Trop` (23 / 26 / 17 at the start), with `Patr`, `Gun!`, one `Boss` in 27 (`CLASSES=600`). The kind (`+0x74 & 0xF`) picks the model (sub-level 26, `local/work/lvl26.st`, the creature camera on each, 2026-11-05):
+  kind 0 is the palace guard: health 50 the red-armoured one, 30 the same model in green; kind 3 a grey walker droid, kind 4 a brown droid (`0x13` grey, `0x40` / `0x50` the big walker in 27). Being Trops, every one answers the creature camera and the Cheats row Creature Cam's stick drive. A Trop's current animation block is at `+0xCC` (= `+0xD0` when not blending; its animation state is `+0xB8`, see *Animation format, exactly*), `+0x70` points to a `Dfob`; its draw matrix `+0xDC` is Rz(180) of its heading `+0x14` (a heading set by hand needs the rows `+0x20`, `+0x30` written with it). The guard's blocks: `trSt`, `trOu`, `trSh`, `trTr`, `trDi` (17 bones); the droids' `a1St` / `a2St` (15). Bone indices are per block (Dash's `fall` lists his nodes in another order than `trot`): map bones by node address. The guard's skeleton is Dash's less the neck: root (scale ≈ 0.215) → pelvis → legs 3 + 3 (local x along the limb, as Dash's, with the same sign: a limb's child translation `+0x38` lies along the same local axis on both), spine → chest → arms 3 + 3 and the head; Dash's model frame is ≈ 4.1 times the guard's, and the two models' local frames agree (pelvis, spine, chest within 16° of each other in `palace.st`). Its limb meshes are variant groups (`w0` `0x5065ff00`, `+0xC` count 2, `+0x10` a list of type-3 mesh nodes, `+0x14` the drawn one): variant 0 the detailed near mesh, 1 the far one, `+0x14` left at whichever the last guard drawn needed. The spine mesh (`0x3064ff60`, the grey belt under the armour) is plain; its texture DL sets segment 4 itself (`MOVEWORD 0xBC001006`, then a `G_DL` into it). The right hand's mesh is the guard's rifle. Every Trop has a bone node tree of its own (2026-11-07, `palace.st`: Dfob `+0x84` roots `0x801ED7C8` Trop 0, `0x801EEA58` Trop 4, `0x801F0708` Trop 10, `0x801F1098` Trop 12; bone nodes `w0 >> 28 == 0xD`), so swapping one Trop's child lists changes that one only. Its tree's bone nodes depth first in child-list order are 19: the root (`0xD065…`), its one child (`0xD064…`), then the 17 bones, `trSt` index i = tree node 18 − i (Trop 0's `trSt` entries `+0x38 + 0xA0·i + 0x08` are exactly nodes 18..2; Trops 4, 10, 12 have the same child counts in order: 1,1,1,4,2,4,2,2,1,2,2,1,1,2,2,1,2,2,1). Only Trop 0's `+0xCC` is the `trSt` block itself; the others' is an instance record whose `+0x1C` points into the shared block. The game does not rewrite a Trop's bone lists while it lives (Trops 0 and 10, 600 VIs, Trop 0 walking 46 units); the mesh variant pointer `+0x14` it sets lives on the shared mesh nodes. This Level puts the Trops and their trees back at the same addresses with the game's lists (`t_guri.py`). The Trop class record is `0x80112D78` on every level read (`palace.st`, `echo_cave.st`, `play.st`: `+8` count 26 / 20 / 37, `+0xC` size `0x120`, `+0x10` pool). Guri (`guri.c`) is drawn on one Trop this way.
+  Dash drawn as the guard (the Cheats row Look, `guard.c`, its meshes from `harness/guard_asset.py`): each guard mesh (the near variant) baked into the matched Dash bone's local frame with no pose (a bake from posed world frames froze the pose difference into the arms as spikes), Dash's own meshes left out of his node lists but the weapon (his jetpack, bone 9's second mesh, would show as a grey and brown back). He stands, runs, turns and fires in the red armour with his own animations.
   Level 8 (between Bike End and Freighter) has no slot. PC slots 11–13 are small code-only DLLs;
   nothing of either level's data was found. Loading a slot: write the id, then debug This Level
   (item 8). After a cutscene the game moves on to the next slot by itself.
@@ -684,18 +1039,21 @@ Found while researching a ledge hang (see the harness notes on recording an obje
   level's music track (`0x800D075C`/`0x800D075E`) and volume (`0x800D0760`) by comparing the name's first word
   ("3. A" for Asteroid Field → track 51; no match → −1, no music).
   - **Moved (gallrun builds):** the three arrays live in `g_levels` (`gallrun.c`,
-    the Gall area) with 33 entries: roms `+0x40`, flags `+0xC4`, names `+0x148` (`0x988` bytes; header copied too);
+    the Gall area) with 34 entries: roms `+0x40`, flags `+0xC8`, names `+0x150` (`0x9D0` bytes; header copied too);
     `gallrun_boot()` (called from `_start`) copies the stock 32, entry 32 is the Gall Run's blob (flag 0, its length,
-    "Gall Run"). `hooks.S` `hook_table` rewrites 15 words: the bases (`lui`/`addiu` at `0x800192DC`/`0x800192E8`,
-    `0x800193CC`/`0x800193DC` (`lw t8, roms`), `0x80019448`/`0x8001944C`, `0x800194A8`/`0x800194AC`,
-    `0x8001950C`/`0x80019518`), the offsets `0xC0 → 0xC4` (`0x80019300`, `0x80019314`) and `0x140 → 0x148`
-    (`0x80019454`, `0x800194C8`), the queue's bound `slti 0x20 → 0x21` (`0x80019504`). The tables at `0x80001330`
+    "Gall Run"), entry 33 the duel's (`duel_level.bin`, flag 0, "11a. Duel: Guri (bonus)": the name's first word keeps
+    sub-level 26's music, track 0x7D; empty without the feature). `hooks.S` `hook_table` rewrites 15 words: the bases
+    (`lui`/`addiu` at `0x800192DC`/`0x800192E8`, `0x800193CC`/`0x800193DC` (`lw t8, roms`), `0x80019448`/`0x8001944C`,
+    `0x800194A8`/`0x800194AC`, `0x8001950C`/`0x80019518`), the offsets `0xC0 → 0xC8` (`0x80019300`, `0x80019314`) and
+    `0x140 → 0x150` (`0x80019454`, `0x800194C8`), the queue's bound `slti 0x20 → 0x21` (`0x80019504`): 33 is past it, so
+    our queue (`own_queue`, and the game's restart through `tramp_level_queue`) queues 32 and 33 itself, and the stock
+    bound still sends 34 (the duel's Stage Complete: id + 1) to the Main Menu. The tables at `0x80001330`
     stay as they are and are no longer read by the game in such a build.
 - **Level-index table** `0x800DD77C` (u8 [32], by sub-level id): `0x80035D50` returns `0x800DD77C[LEVEL_ID]`
   (Asteroid Field's 6 → 2); its callers are the end-screen stats `0x800216DC`, `0x800364CC`, the save stats
   `0x80035DA8` and the level starts `0x8008CFF4`, `0x80097C64`, `0x800709E8`, `0x800A7F5C`, which write the save's
   current-level byte (`0x8018BC00 + slot·0x7A`).
-  - In gallrun builds it is `g_level_index` (33 bytes): the `lui` at `0x80035D64` and the `lbu` at `0x80035D74`
+  - In gallrun builds it is `g_level_index` (34 bytes; [33] = 8, sub-level 26's): the `lui` at `0x80035D64` and the `lbu` at `0x80035D74`
     point at it.
 - **Level zones and the vertex rebase** (2026-10-28, Gall 6b / Gall 14): a level's meshes sit in *zone records*
   (95 in Gall 6b, 72 in Gall 14): `+0x10` flags (`0x40000000` = visible from the current zone), `+0x14` s16 (x, y) =
@@ -710,6 +1068,67 @@ Found while researching a ledge hang (see the harness notes on recording an obje
   last time it was visible: a RAM dump's raw vertices depend on the path the player took (a debug-menu teleport
   detour leaves whole 100-unit shifts). Right after a load every zone is at (0, 0) and the records equal the
   unpacked blob. Part boxes, DLs and node transforms are not touched.
+  More of a zone record (2026-11-10, sub-level 26's round room, `local/work/duel/arena/` probes): `+0x04..+0x0C` its
+  centre, `+0xB8` the next zone, `+0xBC` a 0-ended **neighbour list** (zone ids), then the type-7 list. Types read
+  through `0x80017A78`: 5 the ceiling z (float: what a jump stops under), 2 the floor z, 9 the draw mesh node, 1 the
+  floor collision tree, 3 the wall collision tree, 7 the **visible-zone list** (what `0x8000C4D0` shows on entering),
+  29..31 (`0x1D..0x1F`) and 32 the stage end's carry-over offset and next zone (with flags `0x400` portal / `0x1000`
+  stage end, *Stage Complete*), 20 an `'Entr'` message (flag `0x10`), 34 = 0x16 on 80 of 154 zones (likely the
+  atmosphere set), 28 a word not read. In the blob the zone words are offsets or `0x05000000 | n` (mesh node n of the
+  table at header `+0x24`, 0x18 a node), relocated at load. The player's floor search `0x80003EC0` and the walls' push
+  `0x8000D108` (the player's zone's type 3 and 8 trees; with flag 1 also its neighbours') walk the collision trees to
+  `0x3064` leaves of parts (box, count, kind, u16 indices into the one vertex pool `*0x8013CE28`, world units, no
+  rebase: *Player ship* below); a part's float box gates its triangles. The zone search `0x8000C104` takes, over all
+  zones, the one whose floor (type 1) under the point is nearest the point's z: a zone with no floor parts is never
+  entered. Measured on RAM: pool vertices moved with the boxes grown move where the player walks and stops; the pool
+  copied to expansion RAM with `*0x8013CE28` repointed holds (the pointer is read on every use); the draw is separate
+  data (moved collision alone leaves him walking in the fog past the drawn walls).
+- **Class headers in a sub-level blob and the level's class list** (2026-11-11, sub-level 26's blob under id 33;
+  `local/game/duel_level_stock.bin`, RAM on 33). Each class in the blob has a header (0x28: tag, flags, count, size,
+  pool offset, `+0x14` create, `+0x18..+0x24` the four methods, 0 in the blob), its instances after it (Trop: header
+  `0x801B8748`, flags 0x43, 26 × 0x120, pool `0x801B8770`). Relocated words are offsets from the region start
+  (`0x80199324` on 26; the bitmap at blob header `+0x3C`, relocator `0x8001866C`; the top byte the type, type 1 a
+  node of the table at header `+0x14`, n × 0x48); the header's words `+0x10..+0x24` are marked in the bitmap, so an
+  absolute method address written there in the blob gets the base added unless its bit is cleared. The level's class
+  list (41 entries, null-ended, `0x8019A820` on 26, straight before Dspt's header: no free word after it) is set by
+  `0x8001829C` (`*0x80112830` = header word 0xA9); `0x80010894` then, for each tag the main program knows, copies the
+  blob header into its fixed main record (`0x80112838..0x80112FB8`; Trop `0x80112D78`), points the list entry at it
+  and writes `+0x14` 0, the methods and `+0x28` = `+0x10`. A tag it does not know stays as the blob's own header in
+  the list, methods as the blob has them (on 26: `BmbC`, `CrgC`, and `OutR` with count 0 and no methods); three main
+  records are empty (`0x80112988`, `0x80112A48`, `0x80112B98`). The loops run each record's `count` objects from
+  `+0x10` by `+0xC`, skipping objects with `+6 & 0x1000`: think `0x80025C90` (`+0x18`), update `0x80025E3C` (`+0x1C`),
+  draw `0x80025F4C` (`+0x20`), create `0x80025BD0` (only `+0x14` ≠ 0). Messages `0x80026284(obj, msg)` go to the first
+  list record whose tag is the object's own tag (its `+0x24`); broadcast `0x800262FC(tag, msg)` and find
+  `0x8002620C(tag, i)` / `0x80026130(tag, n)` go by record tag; the bolt hit `0x80026480` and the touch `0x80026A94`
+  walk every record with flags & 2, lock-on and auto-aim `0x8005B33C` go through the Dfob's `+0x98`. Measured: a record
+  of another tag with the Trop's four methods and one Trop instance as its pool runs that object as a Trop (think,
+  walk, damage, the bar, lock-on). A Trop object's links are relocated words in its instance (`+0x70` Dfob, the Dfob's
+  `+0x98` back to it and `+0x84` the root node; `+0x11C` the root node, `+0xA8` its child; `+0xC8` / `+0xCC` / `+0xD0`
+  the chain and blocks; `+0xA4` its zone); the kind (`+0x74 & 0xF`) picks only the descriptor list, the gun and code
+  branches.
+  - Where the main program assumes the tag `'Trop'`: the Trop update sets `'xxxx'` for the touch search and writes
+    `'Trop'` back on every update with state ≠ 0 (`lui 'Tr'` at `0x800B3D50`, `0x800B3DD0` (delay slots),
+    `0x800B3E64`; `ori 'op'` `0x800B3E68`; `sw` `0x800B3E6C`); Trop-pool-only code (the record's `0x80112D80` count /
+    `0x80112DA0` pool): the closer pick `0x800B62BC`, the think's target pick `0x800B22E4..0x800B24CC`, the ally-ahead
+    test `0x800B2E78`; broadcasts to `'Trop'` (Blst `'nois'` `0x80033920`; Humn `0x80070764`, `0x80070CD4`,
+    `0x80071598`, `0x80071A58`, `0x80071AC8` (the creature camera), `0x80079B2C`; Boss `0x80045AE0`; `0x80027C4C`,
+    `0x8006323C`; the Trop's own `'nois'` / `'Rec1'` `0x800B10B4`, `0x800B1D64`, `0x800B2770`, `0x800B5B30`,
+    `0x800B5E50`); the sender-tag compares of a Trop's shots (Humn's damage scale `0x800D2514` in `0x8007AD60`,
+    `0x80078B78`, the Trop handler's friendly checks `0x800B5B40` / `0x800B5C40`).
+  - The kind table `0x800E65E4` has 7 lists (kinds 0..6); the gun table `0x800E6600` follows it at once, so a kind 7
+    would read the gun table's first word (0) as its list: a new kind needs both tables moved (code references
+    `0x800B0728` addiu, `0x800B0B34` and `0x800B3358` lui + lw, `0x800B1E78` the gun table) and falls to kind 0's paths
+    at the kind compares (1, 2, 3, 4, 6). Kind 5's list `0x800E64E8` has no user found.
+- **The loader's heap follows the blob's end word** (2026-11-10, sub-level 26 under id 33, flag 0): `0x80019294` passes
+  base + (header `+8` − header `+4`) to the relocator `0x8001866C` as its allocation pointer; type-9 relocation words
+  (`0x09nnnnnn`, `0x80018578`) allocate from it, copying item n of a ROM-wide bank (`*0x80001358`) into the heap (an
+  animation block's tracks are such words: the palace guard's five blocks hold 216, 17,940 bytes). So a blob grown at
+  its end (the end word moved) keeps its appended data: measured with 0x4000 and 0x8000 bytes appended (the first
+  allocation `0x801A619C` = the new end word, the grown region unchanged after 600 VIs, every object as before), and on
+  sub-level 27's blob (stock end `0x80274920`) up to 0xF2C0 bytes (the only words changed by the game those of the
+  animation block instances in it). The
+  vertex pool's u16 index reaches up to pool + 65535 × 12, past sub-level 26's end: vertices appended to the blob are
+  indexable (the first past the end: (end − pool) / 12 = 49320).
 - **The game's random word** `0x8018E9B4` (u32; `0x800B8BE0`: x · `0x41C64E6D` + `0x3039`): idle clips and other
   objects draw from it, so two states at the same frame and place still animate apart unless the whole game state
   matches (Dash's bones in `gall_dash_*.st` made from another `gall_tp5.st`: up to ~1.5 apart).
@@ -789,6 +1208,16 @@ Found while researching a ledge hang (see the harness notes on recording an obje
   120 frames, then state 2, the timer −0.01, the flag 0: the text only, the sub-level stays and play goes on. While
   the state is 7 the 3D world is not drawn (the harness shot shows only the fog colour, the HUD and the text).
   Ships (`Stft`) never call `0x8007489c`: in a flight sub-level the state has to be written.
+- **The player's start and the respawn** (2026-11-09, sub-level 26, `local/work/duel/arena_k2.log`): the start is the
+  blob's one `Dfob` of type 5 (u16 `+0x6A`; place `+0x6C..+0x74` = its `+0x50..`, yaw `+0x78`, copied as is into the
+  Humn's `+0x14` / `+0x8C`); checkpoints are type 3. `0x80074C38(player, _, dfob)` sets Humn `+0xB0` = the point,
+  the place and yaw from the Dfob; with `+0xB0` 0 it takes the type-5 one (`0x80074B84` → `0x80074A24`). The death
+  respawn (`0x80071510..`: health from `0x800E0DDC`, `+0xE4` 3 s invulnerable, then `0x80074C38(player, _, 0)`) puts
+  him at the last checkpoint or the start, lives − 1, no reload: a start Dfob written at run time moves the respawn.
+  The zone under a place is found by the zone search, not by the Dfob's `+0x60`. The stage-end call `0x8007489C`
+  (`0x80076EB0`: `(player, sp+0x430, 0x800E0DC8 == 0)`) needs the player's zone to carry `0x400` and `0x1000`; its
+  effects can be made without it in its own order: the latch `0x800E0F10` = 1 (once), `0x8007BB58(player, &offset)`
+  (offset = a stage-end zone's properties 0x1D..0x20), `0x800DD2B0` = 7, `0x800271B4(2.0)`; then id + 1 loads.
 - Scripted scenery runs as class `Anim` (`0x80112898`, 0x40 bytes), not as its own class. The
   Millennium Falcon leaving the Echo Base hangar (sub-level 4, on the way from the start into the
   first trooper room, ~(−250, −64)) is the only `Anim` there. Instance `0x8019E620`:
@@ -813,7 +1242,19 @@ Found while researching a ledge hang (see the harness notes on recording an obje
   122..255 by height), under a scene light (ambient 82/83/88, directional 204/230/241) that touches nothing unlit; the
   mission's Outrider is lit (`0xE` + normals). A model shown in both (the Gall Run's Falcon, `falcon.bin`) is switched
   between the two looks per level (`falcon.c` `falcon_look()`). The geometry DLs of these meshes: triangles `0xBF` (w1 bytes 1..3), quads `0xB5` (w1 bytes 0..3),
-  vertex index = byte / 5, `G_VTX` loads from slot 0.
+  vertex index = byte / 5, `G_VTX` loads from slot 0. In the character models (the palace guard's 20 parts, 780
+  indices, and Dash's, decoded 2026-11-07): `G_VTX` w0 `0x04 v0 (n << 9 | 16n − 1)` (v0 the cache slot, n ≤ 16),
+  `0xBF` w1 byte 0 `0x02` then the three indices × 5, `0xB5` a quad (two triangles (a,b,c) (a,c,d), all CCW from
+  outside), `0xBE` a cull test (no triangle).
+  Character textures: the palace guard's 13 plain records are CI4 with a 16-entry RGBA5551 palette: TLUT
+  `F0000000 0703C000` into tile 7 at TMEM `0x100`, the texels loaded as 16-bit (`F5500000`, `F3` lrs = W·H/4 − 1,
+  dxt = 2048 / (W/16)), the render tile CI4 (`F54…`, line W/16) with masks log2 W / log2 H, `F2` size, texture scale
+  `BB000001` W·512 / H·512 (so vertex s, t = u, v · 4096); record word 0 (W·4) << 16 | H·4, word 1 `0x00060000`,
+  `+0xC` an 8-byte header (`B8000000 00000000`), the texels, then the palette; addresses segment 4. CI4's line is at
+  least one 8-byte TMEM word: 16 texels wide at least. The material's combiner multiplies the texture by the vertex
+  colour (a white texture shows the vertex colour). Dash's model textures are CI8 with a 256-entry RGBA16 TLUT
+  (32×64, 16×32) and RGBA16 mipmapped (32×32, 16×16); his face has no texture of its own (spread over four 32×64
+  photo textures of the head).
   Culling: the game drops a part by its box and a whole mesh by the mesh box. Meshes drawn far larger than
   their level (Gall Run, 6–13.5×) lost rock in plain view with real part boxes: such parts get no-cull boxes.
   A mesh box must hold the model's origin and stay small (a ±352 cube, or a box from the feet up, culled a
@@ -921,7 +1362,10 @@ Found while researching a ledge hang (see the harness notes on recording an obje
   static; a sprite is CI4 with a 16-colour TLUT at `+0x18`, bitmap count `+0x1C`, bitmaps (w, h,
   buffer) at `+0x24`, odd rows with their 4-byte halves swapped; portraits are 44×44 in a 64×44
   bitmap, index 0 transparent. Text slot table `0x8013CE30`. Echo Base (`play.st`) slot 9: Dash's HUD
-  face; the game has no Lando portrait. Asteroid Field's slot 29 is empty (0 on every frame of `ast.st`,
+  face by the lives count (2026-11-15): CI4 64×38, two bitmaps 64×32 + 64×6, at (25, 15), palette entries 0, 2, 3 a
+  frame of three rings, 1 the transparent columns 35..63, the face inside rows 3..34, columns 3..31; the same form on
+  `palace.st`, `duel.st`, `sew_428.st`, `om.st`, `xiz_glad.st`, `sup.st`, `lvl4.st`; slot 9 empty (0) on `lvl0.st`,
+  `lvl7.st`, `sky.st`, `ast.st` (`harness/tests/t_guard.py portrait`; `guard.c` puts Luke's there with the Look on Luke); the game has no Lando portrait. Asteroid Field's slot 29 is empty (0 on every frame of `ast.st`,
   2026-10-16, `local/work/slot29_probe.py`); Skyhook's (`sky.st`) is Luke in his pilot's helmet, 64×44,
   2 bitmaps 64×32 + 64×12, the picture 42 wide. Asteroid Field draws a portrait by its indices (a grey ramp under
   the green tint): a sprite copied from another level with its own TLUT shows as noise; remap by luminance. Hoth (`lvl0.st`, 2026-10-18, `local/work/hoth_faces.py`):
@@ -1002,12 +1446,18 @@ Found while researching a ledge hang (see the harness notes on recording an obje
   `0x800E9B20..40`); destroyed (its count `+0xD4` < 1) also id 0 (pitch 0.5, 32000) and id 72 at its place (`0x800074BC`).
   The bank and the calls (2026-10-21): one bank for every level
   (`*0x800EEB04` = `0x8010DD60`, the same in sub-levels 6, 11, 30, 31), so any id plays anywhere.
+  It is a libultra ALBankFile: the instrument at `+0xC`, s16 sound count `+0xE` = 131, the ALSound pointers from
+  `+0x10`; the lookup `0x8000686C` bounds an id by that count, so a copy of the instrument with more sounds, the bank
+  pointed at it, plays new ids. A raw16 wave table (type 1) plays through the wave-table load's own case, no encoder
+  needed (`saber.c`'s sounds, ids 0x83..0x8B).
   `0x80007340(id, ch, pitch, vol, loop)`: volume × the effects option, pan 64. `0x8000742C(id, ch, pitch, vol, float
   *pos, loop, near, far)` sets the fall-off `0x800D07E8` / `0x800D07EC` and calls `0x800074BC(id, ch, pitch, vol, pos,
   loop)`: volume × 1 inside near, down to 0 at far, pan 64 + 45 × the point's side of the camera. All end in the queue
   `0x80007128(id, ch, pitch, vol, pan, loop)` (8 slots at `0x80110FE8`, voices `0x80110EE8`; pitch ×2, min 0.05; ch is
   the priority: a full queue drops the lowest); the player (`0x800BF080` / `0x800BF200` / `0x800BF350`) is called only
-  from `0x800068A4`..`0x80006C1C`. A looped sound (loop 1) lives while requested every game frame (the same id updates
+  from `0x800068A4`..`0x80006C1C`, so a request whose slot is freed (`+0` = `0xFFFFFFFF`) in the frame it was queued is
+  never played (`saber.c` drops the weapon click so, 2026-11-16). Dash's death fills it: the game's death sounds 0x21,
+  0x4F x2 take the last free slots that frame, a one-shot asked after them by the saber was dropped (2026-11-16). A looped sound (loop 1) lives while requested every game frame (the same id updates
   its slot, the louder of two requests wins); from the second frame without one its volume falls 64000 × dt a frame
   (`0x8018E998`, the frame time) and the voice ends. A one-shot plays out.
   Engines: the player's ship `0x80007340(42, 6, 0.093..0.126 by speed, 21000, 1)` every frame (`0x8009863C`; id `0x2A`
@@ -1060,6 +1510,9 @@ Found while researching a ledge hang (see the harness notes on recording an obje
     30 frames a second; scaled in their class thinks, the scene, its lines' timing included, runs slower. Written from a frame hook it has no effect: the next frame sets it afresh.
   - No scene timer was found (counters go on through held lines). The scene's state is the pools of `Dspt`, `Anim`,
     `Bmap`: written back as read at a later moment, the scene goes on from there (the last scene from its tunnel).
+  - Cut 13 (sub-level 31): slot 1 is a 320 × 140 CI8 still of Leia and Luke from its first scene VIs, Luke's face in
+    the box (160, 5)–(265, 125), Leia's hand on his shoulder in (140, 92)–(190, 140) (`harness/luke/luke_portrait.py
+    --dump`: the level loaded through the debug list's This Level from `play.st`, RAM at scene VI 60).
   - Pictures: HUD sprites in the level's table `*0x8013CE2C`, drawn by the HUD every frame at the place in their
     header (`+0` x, `+2` y; −1000 off), which `Bmap` objects write through `0x80009088(sprite, x, y)` (their draw
     method, `0x8003D1B0`: id `+0xA`, x `+0x1A`, y `+0x1C`, skipped while `+8 & 0x20`). Header: `+4` w, h, `+8`/`+0xC`
@@ -1115,9 +1568,21 @@ Found while researching a ledge hang (see the harness notes on recording an obje
   jetpacks up and hovers over Dash dropping bombs (his `+0x50` stays at the take-off spot, z sinking slowly; the
   body is drawn ~15-20 higher). His "throw" off the roof is the bombs' knock-back, not a state or timer: they reach
   Humn's message handler `0x8007A29C` as `'shot'` with flag `0x400`, which calls the damage `0x800732D4` and the push
-  `0x800693F8` (call `0x8007AF80`; the `'push'` message's at `0x8007AF30`); the push sends Dash into the maze
-  (z 117.9 / 105.9). Second phase: he flies around (−12, 11) at `+0x50` z 99–105, below Dash's eye on the wall tops;
+  `0x800693F8`; Dash lands in the maze (z 117.9 / 105.9). That push is an empty stub in this build (2026-11-07:
+  `sw a0,0(sp); jr ra; sw a1,4(sp)`), so what throws him is not it (not found; see *The 'push' messages* below). Second phase: he flies around (−12, 11) at `+0x50` z 99–105, below Dash's eye on the wall tops;
   the maze floor (z 105.9, e.g. (−20, 20)) is under him.
+- **The 'push' messages and a knock-back of our own** (2026-11-07, `local/work/melee/p3_dash.py`). Humn's handler
+  `0x8007A29C`: `'shot'` (`0x8007AD34`; the message `+0x04` sender, `+0x08` flags, `+0x1C` → a direction vector)
+  takes the damage (scaled by difficulty `0x8011282A`, and for a `Trop` sender by `0x800D2514`), stores −direction at
+  `0x8018DD00` and 0.5 s in the countdown `0x800E0EC0` (read at `0x80072C48`; no motion), and with flag `0x400`
+  normalises the direction × 1.5, calls `0x800693F8` (call at `0x8007AF30`) and sends `'push'` back to the sender
+  (`0x80026284`). `'push'` to Dash (`0x8007AF5C`): direction × 1.0 to `0x800693F8` (call `0x8007AF80`), then a random
+  damage with flash 1. `0x800693F8` is `sw a0,0(sp); jr ra; sw a1,4(sp)`: nothing moves. A knock-back is Dash's
+  velocity (`+0x98..A0`, units/s) written once with the airborne flag (`+0x74`: clear `0x04000000`, set
+  `0x08000000`): from (0, 25, 10) on `palace.st` his ground speed is cut to 18 at the next update and kept in the
+  air, vz falls ~22 units/s², he lands after 0.95 s (57 VIs) 13.2 units on (peak +1.8), `+0x74` bit `0x00100000` for
+  a moment, the speed gone 3 updates later. The game asks for no animation for it (the one he was in stays): his fall
+  and getting up are ours to play (`diea` falls him backward; played back from its end with a negative speed it may bring him up: not tried).
 - Dash's damage `0x800732D4(humn, amount, ?, flash)`: nothing while `0x800DEB78` > 0, Humn `+0x74` & 8 or the death
   timer `0x800E0EA0` > 0 (3.0 at death); the hit flash (a full-screen tint over the HUD) is float `0x800E0DF0` =
   amount × 32, at most 0.5 (stored in the delay slot `0x80073450`), colour s16 ×3 `0x8018DCF8` (flash 1: 255 128 0,
@@ -1127,6 +1592,122 @@ Found while researching a ledge hang (see the harness notes on recording an obje
   tentacle ("Tentacle"); its health is the float `+0x7C` (eye 500, tentacle 200; a trooper's `+0x7C` is
   50), `+0x60` is not it. A Trop's AI state is the int at `+0x78` (jump table `0x800ED490`, think
   method `0x800B1FA4` = class record `+0x18`), timer `+0x80`, target `+0x9C` (Dash once awake).
+  How a Trop notices Dash (pseudo-C of `0x800B1FA4`, 2026-11-06): state 0 is idle; each time its timer `+0x80` runs
+  out it takes Dash as target and wakes if `+0x74` bit `0x20` (alerted, cleared there) is set or `0x800B1384` says it
+  sees him: distance² ≤ 2 × `+0x88` and his direction · its facing row `+0x30` ≥ −0.2 (`0x800ED424`; kinds 1 and 6
+  see all round), only while `+0xA4` and its node `+0x70` are live. Waking, a kind-0 Trop sends `'nois'` (its
+  position) to every Trop (`0x800262FC`) and plays a shout, then state 2 if `+0x74` bit `0x10` is set, else state 1.
+  Otherwise state 0 starts again (`0x800B04B8(trop, 0)`).
+  How an awake Trop closes in (pseudo-C of the think, of the state switch `0x800B04B8` and of the Trop update
+  `0x800B2FA0`; a RAM run on `palace.st`, Trop 0 alerted, 2026-11-08, `local/work/melee/d3_chase.py`):
+  - Bit `0x10` ("closer"): Dash's update `0x80074FA4` calls `0x800B62BC(6, his place)` every frame, which clears it on
+    every Trop and sets it on the 6 live ones nearest him (a `'clos'` message sets / clears it too). Only a closer walks.
+  - Fields (the same on every palace Trop): `+0x88` 900 (30²), `+0x90` 225 (15²), `+0x94` 2025 (45²): squared
+    distances. The range test `0x800BAF2C(d², 0.8)` is d < 200 × (0.8 − 0.1) = 140.
+  - The think turns it to the target each frame (`0x800B12CC`: wanted yaw `+0x98`, returns its facing · the target's
+    direction, "dot"). State 1 (stand and aim, block id 3, timer 1.5–2.5 s): at the timer's end, in range and
+    dot > 0.98 → state 3.
+  - State 2 (walk): the update plays id 1 `trTr` and moves it along its facing at 5.0 units/s of game time (measured
+    4.98; `trTr` has no root motion), turning toward `+0x98`. Entering state 2 sets the timer to 1.0–2.0 s (random); no
+    distance ends a walk. At the timer's end: d² < `+0x90` or d² < `+0x94`, in range and dot > 0.98 → state 3; else
+    d² > `+0x88` or not a closer, and dot > 0.98 → state 1. Bit `0x200000` is set while dot > 0.9; the update's stuck
+    check (moved under half the expected step, or `0x800B0384` blocked) sets `0x100000` and a random side bit
+    `0x1000` / `0x2000` (the next walk aims 30 units to the side of the target).
+  - State 3 (shoot, id 2 `trSh`): the timer 1.0–2.0 s; at its end d² > `+0x90` (beyond 15 units) → state 2, else 0.1–0.6
+    s more shooting. So inside 15 units an awake guard never walks again: it stands and shoots.
+  - Measured: from 12 units it woke as a closer at 1.26 s (game clock), walked 1.05 s (5.67 units) to 6.36 and shot from
+    there for the rest of the 8 s; from 30 units: walks of 1.0–1.5 s between shots, 30 → 24.4 → 17.1 → 10.65 in 8 s.
+  More of the Trop (2026-11-09..11, `palace.st` and the duel, `local/work/duel/` probes):
+  - Heading: facing = (−sin h, cos h) of `+0x14` (heading 0 walks +y); a heading set by hand needs the rows `+0x20` /
+    `+0x30` written with it, and the think turns a hand-set heading back to its target.
+  - The turn: the update steps its heading `+0x14` toward `+0x98` (written straight by the think's `0x800B12CC`, no rate
+    there) as step = clamp(`+0x98` − h, ±40°) (the ±40 as `lui` words `0x4044` / `0x4220` / `0xC044` / `0xC220` at
+    `0x800B4F08..0x800B4F40`; the clamp skipped in state 3 of kind 0), then h += step × 4.0 × dt (`lui at, 0x4080` at
+    `0x800B5008`, the gain, also on `+0x18` / `+0x1C`): walking at most 4 × 40 = 160 °/s with a proportional tail of 4/s;
+    in state 3 4 × the difference (596 °/s measured at a 150° step). A code constant, as the walk's (the duel writes
+    14.0, `0x4160`: 560 °/s, on 33 only, and 0.0 while it turns her by hand).
+  - The update's gate: it returns at once (`0x800B323C..0x800B3244`, to `0x800B5774`) unless its Dfob `+0x70` has
+    `+0x68` bit 2 (linked into a zone): no animation, move, turn or stuck check; the think is gated on `+0xA4` / `+0x70`
+    the same way. Each update its zone find (`0x8000C220`, call `0x800B3CE8`) writes `+0xA4` (`0x800B3CF8`) and its last
+    call `0x8005AE74(Dfob, place, zone)` (`0x800B5634`) links the Dfob into that zone (through `0x8005AAF0`: `+0x60` /
+    `+0x64`, `+0x68 |= 2`, its root shown) or, with zone 0, unlinks it (`0x8005AB90`). The frame dt (`0x8018E998`) has a
+    floor (0.02, `0x800B8E84`) and no ceiling: one long frame (0.44 s measured, from a harness park) gave a running
+    Trop one 5.9-unit step out of every zone, the zone 0 unlinked its Dfob, and nothing in the game links it again:
+    the Trop stood frozen for good (the duel calls `0x8005AE74` with its last live zone after the long frame).
+  - The closer bit `+0x74 & 0x10` also gates its animation: in AI states 0, 1 and 3 the update advances the animation
+    (`0x800170F0`) only with it set, and only the closer pick `0x800B62BC` (over the Trop record's own pool) sets it: an
+    object run by the Trop methods outside that pool stands frozen before its first shot (its fire waits on the
+    shooting animation's wrap) unless the bit is set by hand.
+  - The walk's speed is one code constant, the `lui at, 0x40A0` (5.0) at `0x800B3784` in the update `0x800B2FA0`
+    (state 2), × 0.7 for kind 2 (`0x800ED4F0`), × 1.6 for kind 1 (`0x800ED4F8`); the other `lui 0x40A0` of the Trop code
+    are not the walk. Written at run time (the duel: `lui at, 0x4100`, 8.0, on 33 only) it moves every walking Trop.
+    Written `0x0000` (0.0, what the update gives its other states at `0x800B3794`) the walk state takes no step: the
+    duel holds it so while it writes her place by hand (with the step on top her drawn place ran 0.3–0.4 a frame ahead
+    of the place written).
+  - What pushes the player off a Trop (pseudo-C of `0x80026A94`, 2026-11-12, `local/work/duel/trophold/`): the Humn's
+    update calls the touch search `0x80026A94` at `0x80078B44` and moves himself out by the penetration + 0.25 (vector
+    add `0x8000DADC` at `0x80078C70`). The touch skips a class record without flags & 2 and an object whose radius
+    `+0x60` is not > 0 (its first test); no object `+6` flag is read. The Humn's one exemption (no move,
+    `0x80078BCC` / `0x80078C04`): a `'Trop'` with `+0x74 & 0x300` (the dianoga's eye / tentacle) and a `'Boss'` whose
+    `+0x78` is `'IG88'`. The Trop update rewrites its `+0x60` each frame only while it is > 0 (`0x800B3CB4..0x800B3CD4`:
+    the kind's radius, 0 in dying state 6, scaled in state 5), then runs its own touch (`0x800B3D30`) and moves itself
+    back from what it touches; the bolt hit `0x80026480` has the same two gates. So the game has no per-object
+    collision flag: it switches a touch off by the radius's sign (IG-88 negates his while the player is near, a dying
+    Trop gets 0); a radius written negative stays (−2.80 held 334 VIs) and pushes nothing, both ways. Refuted as
+    switches: the class record's flags & 2 cleared (the Trop's own touch then stops it 4.66–4.71 short of the player);
+    `+0x74` `0x100` / `0x200` (they send its think `0x800B1FC0` and update `0x800B2FD4` into the dianoga's branches;
+    `0x200` sends `'Spik'` to the Humn on touch, `0x800B3DC8..0x800B3E04`). The lock-on test that reads `+0x60 > 0` as
+    alive drops such a Trop: a Trop's health is `+0x7C`.
+  - That push is 3D (pseudo-C of `0x80026A94`, 2026-11-15): the out vector is his place − (the other's x, y, and his
+    own z clamped into the other's `[z + +0x68, z + +0x6C]`), normalised, scaled to the penetration + 0.25
+    (`0x8000DD98`) and added to his place (`0x80078C70`); its z part over 0.1 (`0x800EBC78`) clears his `+0x74`
+    `0x08000000` (air). With the two on one floor and his z a hair under hers the vector dips a little: harmless in
+    play (one push moves him out of reach, the floor catches him), but a player pinned in x, y alone (a harness
+    writing `+0x50` / `+0x54` each frame) while a Trop stands on him is pushed down every frame, more as the dip grows:
+    the duel, Luke at z 123.43 with Guri 0.6 off, 123.07 → 121.0 → 114.8 in four frames, through the floor; the
+    ledge hang then caught him under it (`g_hang_state` 1, his lock and fire off for good).
+  - The Trop update's body push (2026-11-14, the duel's leap): in every AI state but 0 its collision block
+    (`0x80026A94` and the walls' push `0x8000D108`) holds a body sphere at its z + its root node's height (`+0xB4`, the
+    update's local), radius `0x800ED520` (2.8 for kind 0; the step 1.1 × it in state 2), so a Trop whose root comes
+    under ~1.8–1.9 over the floor (lying, rolling) is pushed up; above the floor by more than 0.02 (`0x800ED52C`) the
+    airborne branch then falls it a frame. State 0 skips that block (z 0.000 through a forward roll).
+  - A z written by hand is kept: the update falls it by its fall speed `+0xA0` (`+= 30 dt`, z −= dt × it, 0 on the
+    floor: `0x800B4CF0..0x800B4DF8`), 0.02 → 0.30 a frame over 15 frames; written each frame with `+0xA0` held 0 it
+    stays the written one less ~0.02.
+  - A `'shot'` switches a Trop's block at once (state 4 and its `play` of `trOu`), whatever block runs; its state's
+    `set_anim` (`0x80017764`) plays its block again whenever the pick `ctl2` (`+0xD4` / `+0xD8`: {time, list index})
+    names another list entry, so a block of one's own kept through a held state needs that pick kept too.
+  - Its blocks (the guard's `trSt` 30 keys 2 fps wrap, `trTr` 15 / 15 fps wrap, `trSh` 8 keys wrap (state 1 id 3 at
+    0.5 fps, state 3 id 2 at 12 fps), `trOu` 21 / 15 fps (state 4's 1.0 s ends it: keys 0..14 seen), `trDi` 23 / 15 fps
+    clamp): the same 17 bones in the same order; the AI reads only the tag, keys, frames and wrap / clamp. Root motion:
+    the place moves by the root's sampled x, y change (`trDi` slides her back 5.18, `trOu` 0.34; `trTr` sways, net 0):
+    the walk's speed itself is code.
+  - The fire, `0x800B1560(trop, target pos, gun = +0x74 & 0xF)`, is called on every frame of state 3 (`0x800B2C98`);
+    inside it fires only while its animation mode `+0xB8` is 1 and the block's frame wrapped below `+0x84` (it writes
+    the frame there on each call: the first update after `trSh`'s 8 → 1), aims heading and pitch at the target with a
+    random spread (4.5° Easy / Medium, 1.0° Hard, ≤ 8°), and with the pitch outside ±45° or no line of sight
+    (`0x800654A0`) does not fire and side-steps (state 2, a side bit). The shot is one `Blst` bolt,
+    `0x80031FE0(dir matrix, pos, sector, a, b, c, damage × scale, flags, owner)` at `0x800B1EB4` (*Known hook points*),
+    from the gun table `0x800E6600` (0x14 a gun; gun 0: flags 0, damage 10, 5.0 / 200.0 / 30.0) × the level's scale
+    (*Other `LEVEL_ID` users*); the bolt keeps its owner at `+0x64`, live bit `+0x60 & 0x10000`.
+  - A Stunner ring's `'frez'` puts a Trop of kind 0 / 1 into state 8 for 10.0 s (`0x800B58D0` → `0x800B04B8(t, 8)`;
+    kinds 2–4 and states 4–7 ignore it), with no effect drawn; Humn has no `'frez'` handler. A `'shot'` from any
+    sender staggers a Trop (state 4) at any damage.
+  - The Trop messages method's `'shot'` case (`0x800B59CC`, measured 2026-11-15 on the duel): first it leaves at once
+    for a Trop in state 5, 6 or 7 (`0x800B59E8 lw v0, 0x78(s0)`, `addiu at, zero, 5`, `beq v0, at, 0x800B62A8`, ...;
+    the exit `0x800B62A8`), then a line-of-sight test (`0x800654A0`), then the damage off `+0x7C` (`0x800B5AD0` /
+    `0x800B5AE0` / `0x800B5AF0`), and only then the sender-tag compares: `0x800B5B60` picks the hit sound's path (both
+    meet at `0x800B5BB8`: health > 0 -> state 4 unless the message flags' low nibble is 2, else state 5), `0x800B5C40`
+    (that nibble 2 only) sets the floats `0x800E5EA4` / `0x800E5EA8` and `0x800B5C78` goes on to the `'Hlth'` /
+    `'DSPK'` sends. So the "friendly" compares skip neither damage, stagger nor death; the state 5/6/7 exit skips all
+    three for any shot (a laser bolt still collides with the Trop and is used up). The duel takes it for Guri while
+    she is shut (*Known hook points*: `0x800B59E8`).
+  - `0x800B04B8(t, 4)` on a Trop already in state 4 restarts the stagger: its block's pick time `+0xD4` goes back to
+    0 with no jump in place (the root drifts ~0.3 back over a stagger).
+  Main code never reads the "Villains aren't sleepy" word `0x800DD2C4` directly (only the
+  debug list's table at `0x80025D74` and a store at `0x8001417C`).
+  The game draws no running countdown: `%d:%d%d:%d%d` (`0x800EA394` and others) is printed only by the best-times and
+  Level Complete screens, through HUD text elements (`0x80009088` place, `0x80009138` colour, `0x800091D4` text).
   Dianoga parts only think while `+0x74` bit `0x400` is set: asleep they sit at the anchor
   `0x800E5EE8` (672, −10, 31) + 30 as a still "flower", take no hits and nothing in the harness wakes
   them (teleports, diving, the route's triggers, "Villains aren't sleepy"); XOR `0x400` into all five
@@ -1141,10 +1722,102 @@ Found while researching a ledge hang (see the harness notes on recording an obje
   `IG88`, but built like an enemy: z min/max 0..8 and `+0x60` = +2.5 while alive, −2.5 once dead
   (flag `0x20` at `+6` set too). His real health is the float at `+0x5C4` (750 = the HUD's
   "IG-88 100%"). `+0xAC` reads 5. The lock-on tells the two kinds apart by the z extent.
+- The `Boss` class and its AIs (read 2026-11-10/11, the stock ROM: `om_ig88.st`, `xiz_glad.st`, `gall_boba.st`,
+  `palace.st`; pseudo-C with `harness/decomp.py`):
+  - One class record `0x801129E8` (main data) on every level, methods think `0x800512EC`, update `0x80051610`, draw
+    `0x80052174`, messages `0x800523F8`; the senses table `0x800D06C0` (run by `0x800054FC` through a jalr). Every
+    function they reach (182) is main program (< `0x800D06E8`): no level overlay, no read of the level id. The methods
+    branch on the tag at `+0x78`: `IG88` think `0x80047954`, update section `0x8004BCE8`, animation descriptors
+    `0x800DE978`; `glad` `0x80049AA4`, `0x8004F100`, `0x800DDBC0`; `boba` think `0x80048BE4`; shared: the state
+    setter `0x8003FDB8` (one switch per tag; a hit's damage: the shot handler scales it into a pending `+0x748`, the
+    frame's max, and the update near `0x80046634` caps it at 50 / 45 / 30 on difficulty 1 / 2 / 3 before it leaves
+    `+0x5C4`, 2026-11-16), damage `0x800465E0`, the touch hit `0x8004699C`, the shot handler
+    `0x80052E4C`, the path search `0x80005C24` (nearest node) / `0x800057A4` (route), the node pick `0x8003F958`.
+    There is no create method: Boss objects come from a blob's class header at load; a level whose list holds the
+    record with count 0 (sub-level 26) gets one only by a count and a pool written after each load (the loader writes
+    0 again).
+  - The instance (0x7C8): AI state `+0x584`, fire mode `+0x550`, sub-state `+0x6EC`, counter `+0x58C`, the player's
+    distance `+0x5E0`, move speed `+0x5C0`, stagger `+0x6F8`, health `+0x5C4`, the zone `+0x70` (recomputed each update
+    from the place by `0x8000C220`), Dfob `+0x74`, the animation state `+0x80` (chain `+0x90`), controller `+0x6E8`,
+    his one shell `+0x514` (EShd), the Humn `+0x5C8` / `+0x5F4`, his path graph `+0x7B8` (node count `+0x7B4`), the
+    path segment's target `+0x6C4` (xyz) and remaining length `+0x6E0`, his node `+0x7BC` (the previous `+0x7C4`), the
+    edge's jump flag `+0x7C0` (bit 0: state 9). His Dfob: `+0x84` the model root, `+0x68` bit 2 needed by think / update
+    / draw, `+0x98` the boss, `+0x9C` the Info that gets `'Mort'` at his death (the send skips a null). A mesh's draw
+    stamp `+4` past the frame counter (after a reload) keeps that mesh undrawn.
+  - IG-88's AI (level 0xA): state 0 runs node to node at 12 u/s (`IWLK`, turns in place 370–520 °/s), 5 stands and
+    fires within 20 (his walk ends at the node nearest the player, 6–9 off), 9 jumps (10 u/s up to 20 high), 0x10
+    flies off at 24 u/s (after a hit, odds 1 − health / 500 clipped to 0.1..0.7). State 0 picks a node only from a
+    path segment whose target is his own place, remaining 0 and no jump flag. His graph: 148 nodes of 0x6C (8
+    neighbour indices, 9999 none; 8 edge lengths; 8 jump flags at `+0x40`; place `+0x60`), no pointers inside. The
+    route caps it at 150 nodes: its work buffer `0x8018D4A0` (12 B a node, `0x8003FA2C`) ends at the nearest list
+    `0x8018DBA8` (`0x8003F97C`); more overwrites that list and the Expl ring heads `0x8018DC80`. The flight picks
+    random nodes until one is >= 40 units off (`lui 0x4220` at `0x80042054` and `0x80043FBC`): in an arena where no
+    node is that far from some place the do-while never ends and the game hangs. His bolt: in the update's case 5
+    (fire mode 1, a stream ~2 spawns a game frame) `jal 0x80064584` at `0x8004C278` (an Expl: kind, muzzle, 0,
+    velocity; owner him at sp + 0x18); at the stock rate he took the player 100 → 6 in ~4 s. The touch hit (end of the
+    update, every frame): the player within 6.0 (`+0x5E0`; the `lui 0x40C0` at `0x80046A04`) → his radius `+0x60`
+    negated (no push) and `'shot'` 0.5 to the player, else the radius positive again. His end: state 3 runs a death
+    camera (`0x80009648(9)`), state 4 sends `'Mort'` to the Dfob's `+0x9C` and his think sends `'LEnd'` to the Humn
+    every frame in state 4 (the Humn writes game state 3 on each, `0x8007A978`, over any stage end). The setter's own
+    case 0xB runs the death camera too, but 0xB written straight into `+0x584` holds him: no think case runs, his
+    update still plays his chain's current block and he stays drawn. Model 37 nodes (17 animated bones + an unanimated
+    gun node, joints 5.24 high, the left arm one segment with no forearm), 11 blocks (`IWLK ISTD IAIM ISHT IFLM IHIT
+    IOFF IRSE IFAL ILND IDIE`, 88 KB), all in level 0xA's blob. Seen in RAM: a stiff, robotic gait and turns whatever
+    blocks he plays (it is his code's speeds and turns).
+  - Boba Fett (sub-level 15, `gall_boba.st`: `gall_6b.st` + 4 debug Teleports, the 4th onto his pad; the game starts
+    his fight itself, `'Mst1'` → state 10, a cutscene with `'view'` to Slave I): no graph (`+0x7B8` 0), an arena box
+    `+0x5A4..+0x5B4`; 12 blocks, none a walk (`BCSH BHT2 BHIT BFLM BMIS BSHT BLND BHVR BFAL BRSE BOFF BSTD`): he never
+    walks; jetpack up (`BOFF`, `BRSE`), flies / hovers 10–14 u/s, lands, stands 1–4 s, fires 3–5 s (missile far, flame
+    near), off again; every other landing 3–10 units from a standing player; hit: `BHIT` / `BHT2`, a cooldown 2 + 2 ×
+    (difficulty − 1) s, then by a health chance into the air (9), else fire (5) or a pause (12); death 11 → 3 → 4
+    (`'Mort'`, `'wake'` to Slave I). Skeleton 18 bones, joints 5.05 high: the most human one.
+  - The gladiator droid (27, `glad`): rises 8.5 s (state 10, `GRSE`), then state 0 walks round the player at ~9–10
+    units at 8–9 u/s, stands (5) 3–28 s dropping bombs; 5 blocks (`GRSE GDIE GDUP GDWN GWLK`), 15 bones, 19.3 high.
+    His arena (2026-11-12, stock 27, `xiz_glad.st`): a round room centred (31, −34), the rim wall at radius 73.6
+    (vertical to z 159.6, a dome to 191.4), the floor four sliding panels (75 square, one per quadrant: zones 0x4B /
+    0x45 / 0x44 / 0x46, collision a zone's prop 13 group under prop 14's transform, drawn under prop 15's) at z 123.45
+    over the maze (floor 105.5), the centre the lift's top (zone 0x5F), one opening (his alcove north-west, zones
+    0x4C / 0x4A / 0x49). The floor opens only on his first fall: his Dfob 41's `+0x9C` is Info 24 (`0x801BF3BC`),
+    whose keyframe 1 list (`+0xCC`) sends `'GtoN'` to the four panel movers (Info 25–28: `0x801BF544` NW, `0x801BF6CC`
+    NE, `0x801BF854` SW, `0x801BF9DC` SE), which slide them 95 units out diagonally under the roof (the collision rides
+    with them); its keyframe 3 list sends `'LEnd'` to the Humn (27's Level Complete, game state 3). The closed panels
+    sit where the movers leave them (NW (−6.509, 3.488), NE (68.498, 3.479), SW (−6.518, −71.509), SE (68.479,
+    −71.528)), not on the exact quadrant lines: along x 31 and y −34 gaps of ~0.01, where a standing Trop whose zone's
+    panel misses the point falls into the maze (a player walking across does not). Their collision parts
+    (`0x80200B3C`, `0x80200C9C`, `0x80200CF4`, `0x80200D4C`, kind 7 strips, 48 pool vertices shared between them only at
+    equal local places) are plain data in the blob. The lift's top (zone 0x5F: its moving collision, prop 0xF, part
+    `0x80200328`, a 16-gon of radius 10.28 at local z 122.95 under a transform at (31, −34.01, 0.5); its static, prop
+    1, the shaft's floor at z 34.5 out to 10.4) and the panels' notch round it (a 16-gon of radius 10.4) leave a ring
+    0.12 wide with no floor at the arena's height: a walking Trop's ledge probe `0x800B0384` (1.5 ahead, 2 up, the
+    floor `0x8000C220` finds from its sector: its own zone's first, else the highest of the neighbours' (+0xBC list)
+    below; blocked by a drop > 4 or a found zone with flag 0x200000; a blocked kind-0 Trop goes to state 1, a kind-2 one
+    side-steps) leaving the lift's top finds the shaft's floor there and stops.
+  - The Info class (the level's movers; record `0x80112B38`, 0x188 each, 27's pool `0x801BCEFC`; think a stub
+    `0x8007C6D8`, update `0x8007D3B8`, messages `0x8007DB0C`): a keyframe track `+0xB8` + 0xC i {value, wait (−1 stop),
+    message list}, state u16 `+0xA0` (0 idle, 1 wait, 2 / 3 forward / back), keyframe u16 `+0xA2`, value `+0xAC`, speed
+    `+0xA8`; in state 0 `'Mort'`, `'Trig'`, `'Entr'`, `'ZHit'` start the next keyframe, `'GtoN'` / `'GtoP'` next /
+    previous, `'Mst0'` / `'Mst1'` set / clear `+0xA4` bit 31 (off / on). A list is {object, tag, word, next} entries,
+    sent by `0x8007C360` through `0x80026284(object, &entry[1])`.
+  - The game's on-foot AIs are four: the Trop think `0x800B1FA4` (palace guards, sewer guards, stormtroopers,
+    snowtroopers, the wampa as kind 2: its closing distances `+0x90` / `+0x94` 25 / 36 squared, a trooper's 225 /
+    2025), and the Boss tags `IG88`, `boba`, `glad`. No officer, swoop-gang or other human class fights on foot; Xizor
+    and Vader never do.
 - Boss and target bars (2026-10-14):
   - On foot (`0x8006CB84`): shown while the float timer `0x8018DDF0` > 0; name by the model tag `0x8018DDF4`
     (e.g. `slav` -> "~o~cSlave 1" at `0x800D1E0C`), fraction `0x8018DDEC`; elements 0x38 (name, (160, 190)) and
-    0x39 (percentage "~f3~o~c%d%%" `0x800EB598`, (160, 200)), white, alpha by the timer. Not run in ship levels.
+    0x39 (percentage "~f3~o~c%d%%" `0x800EB598`, (160, 200)), yellow (255, 255, 0), alpha = timer x 255 / 2. Not
+    run in ship levels.
+  - The on-foot bar is driven only by the message `'Hlth'` `{u32 'Hlth', u32 tag, f32 fraction}` sent to the player
+    (2026-11-11): the Humn's message handler `0x8007A29C` (case at `0x8007BAE4`) is the bar's only writer: tag =
+    msg[1], fraction = the float at +8, timer = 2.0 s. The HUD function `0x8006A3C4` counts the timer down by the
+    frame time and, at <= 0, moves both elements to (-1000, -1000); nothing else hides it (a boss's death shows "0%"
+    and fades the same 2 s). The sender: `0x80026284(0x8002620C('Humn', 0), &msg)` (object 0 of the class, its
+    record's `+0x24` messages method). The Boss damage (`0x80046840`) sends it on each hit that changes health
+    (old != new, old >= 0): its tag `+0x78`, health `+0x5C4` / (500 + 250 x (difficulty u16 `0x8011282A` - 1)),
+    0.0 once < 1; the Dianoga (`0x800B58D0`) to its attacker. The name is picked from a tag list at `0x8006CBA8`
+    (`ATST`, `DEYE`, `DSPK`, `IG88`, `boba`, `glad`, `load`, `slav`); another tag leaves element 0x38 the stack
+    buffer's leftover text. The texts are written inside the Humn's think (`0x80070ED0` -> `0x8006E374` ->
+    `0x8006A3C4`): a write in a draw method after it (e.g. the Humn draw `0x8007A118`) sticks for that frame.
   - Ship levels (Skyhook's Star Destroyer; code at `0x80096920`, in RAM only, not in the ROM's boot code):
     target by s16 `0x8018E460` (1 "Reactor Core" `0x800D1DB0`, 100 "Star Destroyer" `0x800D1E2C`, else
     "Turret" `0x800D1EBC`); element 0x34 the name at (160, 190), 0x35 the percentage at (160, 200), both

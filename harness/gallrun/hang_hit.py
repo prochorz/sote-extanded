@@ -164,7 +164,9 @@ bolts (owner Chor, a bolt's last 130 of way, as free_lasers()) over the last 6 f
                of g_shot going 0 after Dash's jump (the gunner's view back);
                --view 4 --window (from _rail, --frames 1600): >= 100 shot frames, all VIEW_MODE 4, the window placed <= 2;
                --save-at jump --hull (from _free): >= 150 fly-away frames, the hull below the Falcon >= 80 %, MSG_HOLD 0
-               (Lando's line not held), the nose's pitch <= 16 deg;
+               (Lando's line not held), the nose's pitch <= 16 deg, its pitch and yaw reversals (a change >= 0.2 deg
+               from the frame before against the last such one's sign) <= 6 each; with --pitch-step D also the largest
+               nose pitch change in one frame from 0.3 s into the fly-away (HULLSUM's "pitch step") <= D deg;
                --trail (from _jump, --frames 120): >= 60 jump frames, the Falcon's trail drawn on >= 90 % of them (the first
                ~4 are within TRAIL_CAM_GAP of the held eye), the Falcon on screen every frame before the flash (g_fj_t < 1.9)
 Prints HANG lines (every 6 game frames), HP lines (a health change), a summary per object."""
@@ -183,6 +185,7 @@ ap.add_argument('--turn', default=''); ap.add_argument('--turn-n', dest='turn_n'
 ap.add_argument('--look', action='store_true'); ap.add_argument('--light', default=''); ap.add_argument('--light-at', dest='light_at', default='60,240')
 ap.add_argument('--view', type=int, default=-1); ap.add_argument('--window', action='store_true'); ap.add_argument('--reach', type=int, default=0)
 ap.add_argument('--trail', action='store_true'); ap.add_argument('--hull', action='store_true'); ap.add_argument('--away-put', dest='away_put', default='')
+ap.add_argument('--pitch-step', dest='pitch_step', type=float, default=None)
 ap.add_argument('--check', action='store_true'); ap.add_argument('--light-box', dest='light_box', default=''); ap.add_argument('--light-hide', dest='light_hide', default='falcon', choices=['falcon', 'or', 'fbin', 'slave', 'c05or'])
 A = ap.parse_args()
 CHECKS = []
@@ -950,7 +953,20 @@ def trail_frame(k, fj):                            # --trail: the Falcon's white
     T_['last_d'] = d_ef; T_['last_fj'] = fj
 
 
-H_ = {'n': 0, 'below': 0, 'hold': 0, 'v': None, 'hp0': None, 'hpmin': None, 'over': 0, 'pmax': None}
+H_ = {'n': 0, 'below': 0, 'hold': 0, 'v': None, 'hp0': None, 'hpmin': None, 'over': 0, 'pmax': None,
+      'last': None, 'sign': [0, 0], 'rev': [0, 0], 'step': 0.0, 'pstep': 0.0}
+NOSE_REV_DEG = 0.2                                 # a nose reversal: a change of at least this whose sign is the opposite
+def nose_turn(pd, yd, away=0.0):                   # of the last such change (pitch, yaw: deg from the frame before)
+    if H_['last'] is not None:
+        dy = (yd - H_['last'][1] + 180) % 360 - 180
+        if away >= 0.3: H_['pstep'] = max(H_['pstep'], abs(pd - H_['last'][0]))   # (past the turn onto the line)
+        for i, d in enumerate((pd - H_['last'][0], dy)):
+            H_['step'] = max(H_['step'], abs(d))
+            if abs(d) >= NOSE_REV_DEG:
+                s_ = 1 if d > 0 else -1
+                if H_['sign'][i] and s_ != H_['sign'][i]: H_['rev'][i] += 1
+                H_['sign'][i] = s_
+    H_['last'] = (pd, yd)
 def hull_axis(sf, fal):                           # along / lat of the hull's axis line, its top under, hp
     if 'g_sd_mid' not in SYM: return ()
     ax, ay, mx, my = f32(SYM['g_sd_axis']), f32(SYM['g_sd_axis'] + 4), f32(SYM['g_sd_mid']), f32(SYM['g_sd_mid'] + 4)
@@ -986,11 +1002,12 @@ def hull_frame(k, fj):                             # --hull: the hull under the 
         R, F, U, E = vw; dv = nrm([sd[i] - E[i] for i in range(3)])
         below_deg = round(math.degrees(math.asin(max(-1, min(1, -sum(U[i] * dv[i] for i in range(3)))))), 1)
         pitch = round(math.degrees(math.asin(max(-1, min(1, F[2])))), 1); hf = round(f32(PERSP) / 2, 1)
-        sfw = v3(sf + 0x30) if sf else [0, 1, 0]; npitch = round(math.degrees(math.asin(max(-1, min(1, sfw[2])))), 1)
-    else: below_deg = pitch = hf = npitch = None
+        sfw = v3(sf + 0x30) if sf else [0, 1, 0]; pd = math.degrees(math.asin(max(-1, min(1, sfw[2]))))
+        yd = math.degrees(math.atan2(sfw[1], sfw[0])); nose_turn(pd, yd, away); npitch, nyaw = round(pd, 1), round(yd, 1)
+    else: below_deg = pitch = hf = npitch = nyaw = None
     if npitch is not None: H_['pmax'] = abs(npitch) if H_['pmax'] is None else max(H_['pmax'], abs(npitch))
     print(k, 'HULL away', round(away, 3), 'fal scr', fs, 'hull on screen', len(on), 'below the Falcon', len(below), 'hold', hold,
-          'view pitch', pitch, 'nose pitch', npitch, 'SD middle below the view axis deg', below_deg, 'half fov', hf,
+          'view pitch', pitch, 'nose pitch', npitch, 'nose yaw', nyaw, 'SD middle below the view axis deg', below_deg, 'half fov', hf,
           'fal z over SD', round(fal[2] - sd[2], 1), *hull_axis(sf, fal), flush=True)
     if A.shots and H_['n'] % 15 == 1: e.shot(); print(k, 'SHOT away', round(away, 3), flush=True)
 
@@ -1310,11 +1327,15 @@ if A.trail and A.check:                                          # (the jump fli
 if A.hull: print('HULLSUM fly-away frames', H_['n'], 'hull below the Falcon on screen', H_['below'],
                  '(%.0f %%)' % (100 * H_['below'] / H_['n'] if H_['n'] else 0), 'MSG_HOLD frames', H_['hold'],
                  'over the hull (vertices within 200)', H_['over'], 'hp first', H_['hp0'], 'least', H_['hpmin'],
-                 'nose pitch max |deg|', H_['pmax'])
+                 'nose pitch max |deg|', H_['pmax'], 'nose pitch reversals', H_['rev'][0], 'nose yaw reversals', H_['rev'][1],
+                 'nose step max deg', round(H_['step'], 2), 'nose pitch step max deg (after 0.3 s)', round(H_['pstep'], 2))
 if A.hull and A.check:
     pc = 100 * H_['below'] / H_['n'] if H_['n'] else 0
-    check('fly-away', H_['n'] >= 150 and pc >= 80 and H_['hold'] == 0 and H_['pmax'] is not None and H_['pmax'] <= 16,
-          f"frames {H_['n']} (>= 150), the hull below the Falcon {pc:.0f} % (>= 80), MSG_HOLD frames {H_['hold']} (0), nose pitch max {H_['pmax']} deg (<= 16)")
+    check('fly-away', H_['n'] >= 150 and pc >= 80 and H_['hold'] == 0 and H_['pmax'] is not None and H_['pmax'] <= 16
+          and H_['rev'][0] <= 6 and H_['rev'][1] <= 6 and (A.pitch_step is None or H_['pstep'] <= A.pitch_step),
+          f"frames {H_['n']} (>= 150), the hull below the Falcon {pc:.0f} % (>= 80), MSG_HOLD frames {H_['hold']} (0), nose pitch max {H_['pmax']} deg (<= 16), "
+          f"nose reversals pitch {H_['rev'][0]} yaw {H_['rev'][1]} (each <= 6)"
+          + (f", nose pitch step max after 0.3 s {H_['pstep']:.2f} deg (<= {A.pitch_step})" if A.pitch_step is not None else ''))
 if A.reach: print('END k31', RCH['k31'])
 if SAVE_AT: print('SAVESUM', {x: P['saved'].get(x) for x in SAVE_AT})
 if A.bolts:

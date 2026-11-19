@@ -4,7 +4,8 @@
 
 Pauses, walks the pause list down past Quit onto "Cheats" and around (wrap both ways), opens
 the cheats screen, turns the patch's own features off (New Controls, Z Lock-On, Ledge Hang), switches Invincibility on, gives 50 lives, raises Jump Power, turns fog off,
-narrows vertFOV (values change with L/R), undoes it all with Reset cheats, backs out with B, re-opens and runs Teleport (which resumes the game). Then
+narrows vertFOV (values change with L/R), puts the Look on Luke (Jump Power x 1.4142), undoes it all with Reset cheats
+(Jump Power back to its start value in Dash's basis, also after the next frames unpaused), backs out with B, re-opens and runs Teleport (which resumes the game). Then
 pauses again and checks the game's own list still works (Down -> Options, A opens Options).
 Everything is driven by pad input; values are read from the game's variables.
 """
@@ -58,8 +59,12 @@ down(4); press('A', 20); mark('fog')                   # row 18
 down(2)                                                # row 20 vertFOV
 for _ in range(5): press('L', 8)
 mark('fov')
-down(20); press('A', 20); mark('reset')               # row 40 Reset cheats (last)
-for _ in range(20): press('U_D', 8)                   # back to row 20
+N_ITEMS = 42                                          # Cheats rows in the default build (Look after Friendly Wampas)
+LAST = N_ITEMS - 1 - 20                               # rows below vertFOV to Reset cheats
+down(LAST - 1)                                         # row N_ITEMS - 2 Look
+press('A', 20); press('A', 20); mark('luke')           # Dash -> Guard -> Luke
+down(1); press('A', 20); mark('reset')                 # row N_ITEMS - 1 Reset cheats (last)
+for _ in range(LAST): press('U_D', 8)                 # back to row 20
 press('B', 30); mark('closed')
 press('A', 30); mark('reopened')                       # row is kept (20)
 for _ in range(9): press('U_D', 8)                     # row 11 Go to level
@@ -79,7 +84,7 @@ def snap():
     p = find_player(e)
     return dict(paused=e.r32(PAUSED), cursor=e.r16(CURSOR), list=e.r32(LIST), options=e.r32(OPTIONS),
                 sel=e.r32(S['g_cheats_sel']), open=e.r32(S['g_cheats_open']), row=e.r32(S['g_cheats_row']), off=e.r32(S['g_off']),
-                inv=e.r32(0x800E1B2C), lives=e.r32(0x800E0EB0), jump=e.rf(0x800E0DC0),
+                inv=e.r32(0x800E1B2C), lives=e.r32(0x800E0EB0), jump=e.rf(0x800E0DC0), look=e.r32(S['g_guard_on']),
                 fogoff=e.r32(0x800D2538) >> 24, timer=e.rf(p + 0xE4) if p else 0, lvl=e.r32(S['g_lvl']) if 'g_lvl' in S else -1, level=e.r16(0x8013CE0E), fov=e.rf(0x80192F14), x=e.rf(p + 0x50) if p else None)
 
 
@@ -122,6 +127,14 @@ def script(e, n):
         check('Reset restores the settings', r['inv'] == s0['inv'] and abs(r['jump'] - s0['jump']) < 0.001
               and r['fogoff'] == s0['fogoff'] and abs(r['fov'] - s0['fov']) < 0.01 and r['paused'] == 1,
               f"inv {r['inv']} jump {r['jump']:.2f} fogoff {r['fogoff']} fov {r['fov']}")
+        print(f"Jump Power: start {s0['jump']:.4f} jump {q['jump']['jump']:.4f} luke {q['luke']['jump']:.4f} "
+              f"reset {r['jump']:.4f} teleported {q['teleported']['jump']:.4f}", flush=True)
+        check('Look on Luke: Jump Power x 1.4142', q['luke']['look'] == 2
+              and abs(q['luke']['jump'] - q['jump']['jump'] * 1.4142) < 0.01,
+              f"look {q['luke']['look']} jump {q['luke']['jump']:.4f}")
+        check('Reset puts the Look back on Dash', r['look'] == 0, f"{r['look']}")
+        check('Jump Power stays at start after Reset (unpaused)', abs(q['teleported']['jump'] - s0['jump']) < 0.001,
+              f"{q['teleported']['jump']:.4f}")
         check('Reset turns the features back on', r['off'] == 0, f"{r['off']}")
         check('Reset keeps given things (lives)', r['lives'] == 50)
         check('B goes back to the list on Cheats', q['closed']['open'] == 0 and q['closed']['list'] == 1

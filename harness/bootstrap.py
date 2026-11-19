@@ -45,6 +45,9 @@ RECIPES = {
     # the intro (sub-level 0) on Leebo's "Sir, we've made contact with the Rebels.": its overlays (gall_asset.py
     # LEEBO_TURN) loaded; 11360 VIs from This Level = the game's frame counter 5680
     'leebo_turn': (['level', 'play.st', 0, 11360, 'leebo_turn.st'], 0, ['play'], 0, None),
+    # sub-level 26 (the palace) 600 VIs after This Level, a held radio line up: the red guards (Trop kind 0) the
+    # guard look's meshes are taken from (guard_asset.py)
+    'palace': (['level', 'play.st', 26, 600, 'palace.st'], 0, ['play'], 26, None),
     # (the poses' frame counter 0x8018E9B0 as in the states in use: stand 1141 at 150 VIs, jet 1196; the places are
     # the states' own, read without running them)
     'gall_dash_stand': (['states_dash.py', 'stand', 150], 0, ['gall_tp5'], 14, (62.3, -150.4, 227.9)),

@@ -124,6 +124,8 @@
 #define TAG_GLAD        0x676C6164u   /* model tag (+0x78) of Xizor's palace gladiator droid (class Boss) */
 #define OBJ_MODEL       0x078
 #define TAG_TROP        0x54726F70u   /* the common enemy class (troopers, guards, the sewer dianoga) */
+#define TAG_GURI        0x47757269u   /* Guri's class of her own on the duel (33's blob: the Trop's methods) */
+#define GURI_HEALTH     0x07C       /* her health (a Trop's): her +0x60 is her collision radius */
 #define TROP_KIND       0x074         /* Trop: 0x100 the dianoga's eye, 0x200 a tentacle; 0x400 awake */
 #define TAG_ANIM        0x416E696Du
 
@@ -132,6 +134,11 @@
 
 /* 0x800194DC(sub-level): load a sub-level (the debug list's level entries). */
 #define LEVEL_LOAD      0x800194DC
+
+/* 0x8005AE74(dfob, const float place[3], zone): a Dfob (an object's collision record: +0x60 its zone, +0x68 bit 2
+ * linked) moved to place and linked into zone (0: unlinked, through 0x8005AB90; another zone: unlinked from the old,
+ * linked through 0x8005AAF0). The Trop update's last call (0x800B5634) with the zone its find gave this frame. */
+#define DFOB_ZONE_LINK  0x8005AE74
 
 /* Fog colour (s16 x3, as set and as in use), lights (s16 RGB), view override (u32: 1 keeps
  * edited perspective/fog/light; see the Cheats entries). */

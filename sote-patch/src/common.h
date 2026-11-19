@@ -122,6 +122,7 @@ extern uint32_t g_decode_ov;  /* g_ov_frames at the last player decode */
 /* Cheats toggles: all on after power-on, a set bit switches a feature off (the game's own
  * behaviour). The lock needs the new controls: off with them. */
 extern uint32_t g_off;
+extern uint8_t g_move_slow;   /* the on-foot move slowed while set (core.c reads it; duel.c writes it on 33) */
 #define OFF_CONTROLS 1
 #define OFF_LOCK     2
 #define OFF_HANG     4
@@ -186,6 +187,26 @@ static inline int gallrun_active(void) { return 0; }
 static inline void gallrun_frame(void) {}
 #endif
 
+/* ---- the duel (duel.c, in the Gall code, needs gallrun and guri) ---- */
+
+#if FEATURE_DUEL
+void duel_start(void);                   /* Cheats: load the duel, sub-level 33 */
+void duel_frame(void);                   /* from the overlay hook, once per frame, after gallrun_frame */
+void duel_fire(uint32_t trop, const float *pos, const float *dir);   /* Guri's bolt on 33 (tramp_trop_fire) */
+float duel_rush_range(float stock);      /* melee.c's rush range: the duel's on 33, else stock */
+int duel_aim(uint32_t target, float *pt); /* lock.c's ctl_laser: 1 with a point off her while she runs or moves on 33 */
+uint32_t duel_near(const float *from, const float *dir);   /* lock.c's ctl_laser, no lock: her if the bolt's line passes by her */
+int duel_rush_flip(uint32_t trop, uint32_t player, int start);   /* melee.c's rush: her flip into it on 33 (1 while it runs) */
+extern uint32_t g_guri;                  /* Guri on 33: the one object of the class 'Guri' (0: off 33) */
+extern uint32_t g_duel_shut;             /* Guri takes no shot now (hooks.S tramp_trop_shut: the Trop 'shot' case's exit) */
+#else
+static inline void duel_frame(void) {}
+static inline float duel_rush_range(float stock) { return stock; }
+static inline int duel_aim(uint32_t target, float *pt) { (void)target; (void)pt; return 0; }
+static inline uint32_t duel_near(const float *from, const float *dir) { (void)from; (void)dir; return 0; }
+static inline int duel_rush_flip(uint32_t trop, uint32_t player, int start) { (void)trop; (void)player; (void)start; return 0; }
+#endif
+
 /* ---- jetpack fuel cheat (cheats.c, optional) ---- */
 
 #if FEATURE_CHEATS
@@ -193,8 +214,74 @@ extern int g_fuel_on;                    /* Cheats: keep the jetpack's fuel full
 void cheats_frame(void);                 /* from the overlay hook, once per frame */
 void cheats_pad(void);                   /* from the pad read hook (hooks.S), before the game decodes it */
 void cheats_hud_col(uint32_t *, uint32_t *); /* from the HUD colour hook (hooks.S) */
+#if FEATURE_GUARD
+extern int g_guard_on;                   /* Cheats: the player drawn as the red palace guard (guard.c) */
+extern int g_jump_luke;                  /* Jump Power holds Luke's factor (guard.c; cheats.c's Reset clears it) */
+#define JUMP_POWER 0x800E0DC0            /* float: the game's Jump Power (the debug list's, the Cheats row's), default 1.0 */
+#define LUKE_JUMP  1.4142f               /* sqrt 2: the launch vz scales by Jump Power, the apex by its square */
+void guard_frame(void);                  /* from cheats_frame, once per frame */
+void guard_place(uint32_t node, uint32_t humn); /* from the Humn draw hook (hooks.S), after the game's copy into his placement node */
+void guard_zap(float t);                 /* the lightning over the Look's chest, upper arms and head for t s (the duel) */
+#else
+static inline void guard_frame(void) {}
+static inline void guard_zap(float t) { (void)t; }
+#endif
+#if FEATURE_GURI
+extern uint32_t g_guri_trop;             /* a Trop drawn as Guri (guri.c); set by the harness, 0: none */
+extern uint32_t g_guri_gun_off;          /* her blaster held hidden (guri_blaster: duel.c, her round-off's hands down) */
+void guri_frame(void);                   /* from cheats_frame, once per frame */
+void guri_blaster(int on);               /* her blaster (the hand list's last entry) shown / hidden */
+#else
+static inline void guri_frame(void) {}
+static inline void guri_blaster(int on) { (void)on; }
+#endif
+/* Guri's combo's phases (melee.c's g_melee_phase); PH_GRAB .. PH_UP: she holds him, his fall and get-up */
+enum { PH_IDLE, PH_RUSH, PH_GRAB, PH_PUNCH, PH_SHOVE, PH_LIFT, PH_THROW, PH_FLIGHT, PH_DOWN, PH_UP, PH_COOL, PH_MISS };
+#if FEATURE_MELEE
+extern uint32_t g_melee_on, g_melee_phase;   /* Cheats: Guri's combo (melee.c); its phase, 0 idle */
+extern uint32_t g_melee_z;                /* the aim button held while her combo takes his input (core.c) */
+void melee_frame(void);                  /* from cheats_frame, after guri_frame */
+void melee_pad(uint16_t *buttons, int8_t *sx, int8_t *sy);   /* from cheats_pad: held, his input taken */
+void melee_break(void);                  /* her rush given up (its cooldown), if one runs (the duel's openings) */
+#else
+static inline void melee_frame(void) {}
+static inline void melee_pad(uint16_t *buttons, int8_t *sx, int8_t *sy) {}
+static inline void melee_break(void) {}
+#define g_melee_z 0
+#endif
 #else
 static inline void cheats_frame(void) {}
+static inline void melee_break(void) {}
+#define g_melee_z 0
+#endif
+
+/* ---- Luke's lightsaber (saber.c, optional: needs guard and hang) ---- */
+
+#if FEATURE_SABER
+void saber_frame(void);                  /* from cheats_frame, after guard_frame (saber.c) */
+int saber_out(void);                     /* the on-foot player holds the saber (weapon id 6) */
+void saber_setanim(uint32_t *a);         /* from hang.c's set_anim hook: a = the call's saved a0..a3 */
+int saber_step(uint32_t h);              /* from core.c's ctl_decode, every update: a swing's step velocity;
+                                            the move playing + 1 (1..4) before its link, else 0 */
+void saber_pose(uint32_t h);             /* from the Humn's draw (tramp_look_place): the parry's arms */
+extern int g_saber_move;                 /* the swing playing: 0..2 the swings, 3 the spin, -1 none */
+extern int g_saber_cuts;                 /* the cuts made (one per swing, at its area shot) */
+/* the saber is dark while Guri's combo holds him (her grab to his get-up): no blade, no hum, swing or deflection */
+static inline int saber_dark(void) {
+#if FEATURE_MELEE
+    return g_melee_phase - PH_GRAB <= (uint32_t)(PH_UP - PH_GRAB);
+#else
+    return 0;
+#endif
+}
+#else
+static inline void saber_frame(void) {}
+static inline int saber_out(void) { return 0; }
+static inline void saber_setanim(uint32_t *a) { (void)a; }
+static inline int saber_step(uint32_t h) { (void)h; return 0; }
+static inline void saber_pose(uint32_t h) { (void)h; }
+#define g_saber_move (-1)
+#define g_saber_cuts 0
 #endif
 
 /* ---- overlay drawing (lock.c), usable by features ---- */
@@ -214,6 +301,7 @@ int hang_update(uint32_t obj, uint32_t sp, uint32_t buttons, float sx, float sy)
 void hang_abort(uint32_t obj);           /* Dash died: let go */
 void hang_hold(uint32_t obj);            /* from the yaw hook: keep him turned to the wall */
 int hang_cam(float *facing);             /* 1: camera faces *facing (hanging, letting go) */
+int anim_clone(uint32_t src, uint32_t *dst, uint32_t tag, int keys, const float *tracks, const uint8_t *mask);
 #else
 #define g_hang_state 0
 static inline int hang_update(uint32_t obj, uint32_t sp, uint32_t buttons, float sx, float sy) { return 0; }

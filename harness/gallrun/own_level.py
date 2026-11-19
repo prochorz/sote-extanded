@@ -3,7 +3,7 @@ the stock base level, the enemy shots' damage. Runs the build's ROM (no injectio
 
     M64CPU=2 .venv/bin/python3 gallrun/own_level.py <build>/sote-patch.z64 --case CASE [--state S] [--to K]
 
-  --case cheats   from run/<build>_echo.st: pause, Cheats, the last row (Gall Run), A. Then in the mission at +1500 the
+  --case cheats   from run/<build>_echo.st: pause, Cheats, Go to level --lvl (32), A. Then in the mission at +1500 the
                   Falcon blown up (Stft +0x240 = 0: the game's respawn), at +2400 the game's restart (level state
                   0x800DD2B0 = 6 with the fade on: 0x800271F0(LEVEL_ID) reloads), followed to +3300; changes of the
                   health, Stft state, level state and load queue printed from the kill on
@@ -14,7 +14,7 @@ the stock base level, the enemy shots' damage. Runs the build's ROM (no injectio
                   0x800194DC forced to its -1 path (0x800194E8 bne -> nop until the queue is written) and the game's
                   restart triggered as in cheats: 0x800194DC(-1) from 31 (id + 1 = 32 against its bound); the id after
          golvl    from run/<build>_echo.st: pause, Cheats, the cursor on Go to level (g_cheats_row: the ITEMS row of id 7), g_lvl 0, L once
-                  (printed: g_lvl after it, 32 when the list has 33 entries; the names 31/32 from g_levels + 0x148),
+                  (printed: g_lvl after it, 33 when the list has 34 entries; the names 31/32 from g_levels + 0x150),
                   then g_lvl = --lvl (default 32), A; the level loaded, its blob, 1200 frames
          dmg      from --state (a state in the mission, e.g. run/<build>_s2.st), no input: every drop of the player
                   ship's health (Stft +0x240) with the frame; 3000 frames (--to)
@@ -127,10 +127,12 @@ def script(e, n):
                 if w != S.get('w'): print(f'k {k} level state {w[0]} queue {w[1]} {w[2]} id {lid}', flush=True); S['w'] = w
                 if 'bne' in S and w[1] == 2: e.w32(0x800194E8, S.pop('bne')); print(f'k {k} queued {w[2]}, 0x800194E8 put back', flush=True); S['q'] = w[2]
             if S['after31'] and k >= S['after31'][0] + 120: snap(k, 'after31'); e.stop(); return
-    if A.case == 'cheats':
-        b = [PRESS[p] for p in PRESS if p <= k < p + 4]
+    if A.case == 'cheats':                             # Cheats, the cursor on Go to level, g_lvl = --lvl (32), A
+        b = [PRESS[p] for p in PRESS if p <= k < p + 4 and p <= 80]
+        if k == 100: e.w32(SYM['g_cheats_row'], next(i for i in range(64) if r8(SYM['ITEMS'] + 12 * i + 1) == 7)); e.w32(SYM['g_lvl'], A.lvl)
+        if 140 <= k < 144: b = ['A']
         e.pad(BTN[b[0]] if b else 0)
-        if S['m'] is None and lid == 32: S['m'] = k; print(f'k {k} mission loaded as 32', flush=True)
+        if S['m'] is None and lid == A.lvl: S['m'] = k; print(f'k {k} mission loaded as {A.lvl}', flush=True)
         m = S['m']
         if m is not None:
             j = k - m
@@ -155,7 +157,7 @@ def script(e, n):
         if k == 100: e.w32(SYM['g_cheats_row'], next(i for i in range(64) if r8(SYM['ITEMS'] + 12 * i + 1) == 7)); e.w32(SYM['g_lvl'], 0)
         if 110 <= k < 114: b = ['L']
         if k == 130:
-            def nm(i): return bytes(r8(SYM['g_levels'] + 0x148 + 64 * i + j) for j in range(32)).split(b'\0')[0].decode()
+            def nm(i): return bytes(r8(SYM['g_levels'] + 0x150 + 64 * i + j) for j in range(32)).split(b'\0')[0].decode()
             print(f'k {k} open {e.r32(SYM["g_cheats_open"])} row {e.r32(SYM["g_cheats_row"])} g_lvl after L from 0: '
                   f'{i32(e.r32(SYM["g_lvl"]))}; names 31 "{nm(31)}" 32 "{nm(32)}"', flush=True)
             e.w32(SYM['g_lvl'], A.lvl)

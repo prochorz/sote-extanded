@@ -49,7 +49,9 @@ SHARED int target_alive(uint32_t o) {
         if (U16(o + OBJ_TFLAGS) & BOSS_DEAD_FLAG) return 0;
         return boss_height(o) > 0 ? F32(o + BOSS_STATE) < 0 : F32(o + BOSS_HEALTH) > 0;
     }
-    if (!(F32(o + OBJ_HEALTH) > 0)) return 0;
+    /* Guri (her own class on 33, a Trop): +0x60 is her collision radius, which melee.c turns negative from her rush
+     * to her throw's end (the game's "no push"); her health is +0x7C. */
+    if (!(F32(o + (tag == TAG_GURI ? GURI_HEALTH : OBJ_HEALTH)) > 0)) return 0;
     return tag != TAG_BOXX && tag != TAG_ANIM && tag != TAG_HUMN && tag != TAG_HUMT;
 }
 
@@ -291,11 +293,13 @@ void hold_steer(float yaw, uint32_t sp, float sx, float sy) {
 }
 
 /* Unit direction from a muzzle to the lock in d and the distance; 0 (d untouched) without a
- * live lock or when that would turn a shot fired along dir backwards. */
-static float lock_aim(const float *from, const float *dir, float *d) {
-    if (!g_lock || !target_alive(g_lock)) return 0;
+ * live lock or when that would turn a shot fired along dir backwards. laser: a laser bolt, whose
+ * point the duel may move off its boss while she runs or moves (duel_aim); with no lock, a bolt
+ * passing by her there is aimed off her the same way (duel_near), any other left as fired. */
+static float lock_aim(const float *from, const float *dir, float *d, int laser) {
     float c[3];
-    target_center(g_lock, c);
+    if (g_lock && target_alive(g_lock)) { if (!laser || !duel_aim(g_lock, c)) target_center(g_lock, c); }
+    else { uint32_t t = laser ? duel_near(from, dir) : 0; if (!t || !duel_aim(t, c)) return 0; }
     float v[3] = { c[0] - from[0], c[1] - from[1], c[2] - from[2] };
     float len = sqrt_f(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
     if (len < 0.5f || dir[0] * v[0] + dir[1] * v[1] + dir[2] * v[2] <= 0) return 0;
@@ -311,7 +315,7 @@ static uint32_t g_shot_obj;   /* the projectile that took it */
 
 void ctl_shot(const float *pos, float *vel) {
     float d[3];
-    float len = lock_aim(pos, vel, d);
+    float len = lock_aim(pos, vel, d, 0);
     g_shot_life = 0; g_shot_obj = 0;
     if (!len) return;
     float s = sqrt_f(vel[0] * vel[0] + vel[1] * vel[1] + vel[2] * vel[2]);
@@ -349,7 +353,7 @@ void ctl_laser(uint32_t bolt, uint32_t shooter) {
     if (shooter != g_player || !valid_ptr(bolt)) return;
     float d[3];
     float *dir = (float *)(bolt + BOLT_DIR);
-    if (!lock_aim((float *)(bolt + BOLT_POS), dir, d)) return;
+    if (!lock_aim((float *)(bolt + BOLT_POS), dir, d, 1)) return;
     /* Keep the visible bolt oriented along its flight: right, forward, up rows. */
     float hl = sqrt_f(d[0] * d[0] + d[1] * d[1]);
     float r[3] = { 1, 0, 0 };
@@ -465,6 +469,7 @@ static float approach(float v, float target, float k) { return v + (target - v) 
 void ctl_overlay(void) {
     g_ov_frames++;
     gallrun_frame();
+    duel_frame();
     falcon_frame();
     cheats_frame();
     float dt = frame_dt();

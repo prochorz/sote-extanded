@@ -3,7 +3,7 @@ real camera state (changing the camera away turns it OFF).
 
     M64CPU=0 python3 t_leebo.py <rom> [state]        (default play.st, Echo Base start)
 
-Opens the pause menu, goes onto Cheats, wraps up four items (past Reset cheats, Friendly Wampas and Creature Cam) onto Leebo Scanner, turns it on
+Opens the pause menu, goes onto Cheats, wraps up N_ITEMS - ROW_LEEBO items (past Reset cheats, Look, Friendly Wampas and Creature Cam) onto Leebo Scanner, turns it on
 (camera view 2, the overhead scanner), backs out and resumes, presses Camera (L) which leaves the
 scanner view (view back to 1), re-opens Cheats (the row must now read OFF), and presses A to turn
 it back on. Values read from the game and the payload.
@@ -20,6 +20,8 @@ e = Emu(sys.argv[1])
 state = os.path.join(paths.STATES, sys.argv[2] if len(sys.argv) > 2 else 'play.st')
 
 PAUSED, VIEW = 0x800DD2BC, 0x800E0EEC
+ROW_LEEBO = 37
+N_ITEMS = 42                                          # Cheats rows in the default build (Look after Friendly Wampas)
 
 seq, marks = [], {}
 t = 20
@@ -46,7 +48,7 @@ press('START', 40)                                    # pause
 down(2)                                               # Quit
 down(1)                                               # Cheats selected
 press('A', 30); mark('opened')                        # cheats screen
-up(4); mark('at_leebo')                               # wrap up past Reset cheats, Friendly Wampas and Creature Cam: Leebo Scanner
+up(N_ITEMS - ROW_LEEBO); mark('at_leebo')            # wrap up past Reset cheats, Look, Friendly Wampas and Creature Cam
 press('A', 20); mark('leebo_on')                      # ON -> view 2
 press('B', 30)                                        # back to the pause list
 press('U_D', 8); press('U_D', 8); press('U_D', 8)     # Cheats -> Quit -> Options -> Resume
@@ -85,7 +87,7 @@ def script(e, n):
     if k == END:
         q = st
         check('cheats screen opens', q['opened']['open'] == 1 and q['opened']['paused'] == 1)
-        check('up from the top, past Reset, Friendly Wampas and Creature Cam, is the Leebo Scanner row', q['at_leebo']['row'] == 37,
+        check('up from the top, past Reset, Look, Friendly Wampas and Creature Cam, is the Leebo Scanner row', q['at_leebo']['row'] == ROW_LEEBO,
               f"row {q['at_leebo']['row']}")
         check('A turns the scanner on: view goes to 2',
               q['leebo_on']['view'] == 2, f"view {q['leebo_on']['view']}")
@@ -93,7 +95,7 @@ def script(e, n):
               f"paused {q['resumed']['paused']} view {q['resumed']['view']}")
         check('Camera (L) leaves the scanner view', q['camera']['view'] == 1, f"view {q['camera']['view']}")
         check('re-opened Cheats reads the real state (row still on Leebo, OFF)',
-              q['opened2']['open'] == 1 and q['opened2']['row'] == 37 and q['opened2']['view'] == 1,
+              q['opened2']['open'] == 1 and q['opened2']['row'] == ROW_LEEBO and q['opened2']['view'] == 1,
               f"open {q['opened2']['open']} row {q['opened2']['row']} view {q['opened2']['view']}")
         check('A turns it back on from the OFF state', q['re_on']['view'] == 2, f"view {q['re_on']['view']}")
         e.stop()

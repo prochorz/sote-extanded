@@ -32,6 +32,16 @@
 #define CAM_PITCH_PART   0.8f     /* of that elevation: the target sits above centre, Dash stays in view */
 #define HOLD_RESCAN      8        /* frames between looks for a new target while holding */
 #define RETAP_FRAMES     12       /* Z pressed again this soon after letting go of a lock: next target */
+/* g_move_slow: the decoded forward magnitude (and the strafe's) x STUN_SLOW, at most STUN_CAP (the user: Guri's
+ * Stunner leaves Luke ~40 % of his speed, still turning, aiming and firing; the decode is the accel's only input).
+ * Below the stock run's cap (|v| < 20 after friction) the ground speed is linear in it; full stick decodes 2.05 and the
+ * cap holds the stock run at 24.0 u/s mean, so 0.512 (2.05 x 0.25) gives 9.6 = 40 % at full stick and x 0.4 the same
+ * at part stick. */
+#define STUN_SLOW        0.4f
+#define STUN_CAP         0.512f
+/* a swing before its link turns at most this far toward the stick or the lock: the stick turned it 124..152 deg, the
+ * user chose a little */
+#define SWING_TURN       30.0f
 
 const struct player_kind KINDS[2] = {
     /* On foot no flag marks death, only health 0. 0x400 is set while he swims (the sewer):
@@ -50,6 +60,9 @@ int g_aiming;
 uint32_t g_ov_frames;
 uint32_t g_decode_ov;
 uint32_t g_off;
+uint8_t g_move_slow;          /* set: the on-foot move slowed (duel.c: Guri's Stunner rings); read only here */
+static int g_swing_mv;        /* saber_step's last value: the swing playing before its link + 1, 0 none */
+static float g_swing_yaw;     /* his yaw when that swing started: ctl_yaw turns him at most SWING_TURN from it */
 static int g_cam_valid;
 float g_cam_facing;           /* lazy camera facing in degrees (exported for tests) */
 float g_cam_pitch;            /* camera tilt toward the locked target, degrees up (exported for tests) */
@@ -121,7 +134,7 @@ static int lock_input(uint32_t obj, uint32_t sp, float sx, float sy, int was_aim
     return 0;
 }
 
-void ctl_decode(uint32_t obj, uint32_t sp, uint32_t kind) {
+static void decode(uint32_t obj, uint32_t sp, uint32_t kind) {
     K = &KINDS[kind & 1];
     float sx = S16(PAD_STICK_X), sy = S16(PAD_STICK_Y);
     uint32_t buttons = U32(PAD_BUTTONS);
@@ -130,7 +143,8 @@ void ctl_decode(uint32_t obj, uint32_t sp, uint32_t kind) {
     g_player = obj;
     g_decode_at = g_cam_calls;
     g_decode_ov = g_ov_frames;
-    g_aiming = (buttons & binding(BIND_AIM)) != 0;
+    /* Guri's combo takes his Z from the game (melee.c's melee_pad); held, it still aims: the lock on her is kept. */
+    g_aiming = (buttons & binding(BIND_AIM)) != 0 || g_melee_z;
     g_active = 0;
 
     if (U32(obj + OBJ_NAME) != K->tag) return;
@@ -183,12 +197,48 @@ void ctl_decode(uint32_t obj, uint32_t sp, uint32_t kind) {
     SLOTF(sp, DEC_FWD_MAG) = mag * along;
 }
 
+static float slowed(float mag) {
+    mag *= STUN_SLOW;
+    return mag > STUN_CAP ? STUN_CAP : mag;
+}
+
+/* After every way the decode leaves (camera-relative, lock strafing, the native presets; the paths that zero the move
+ * a zero stays zero): only the accel input, so the game's friction, cap, walk / run choice and step rate follow; turning,
+ * aim and fire do not read it. The turn magnitude is the strafe's only while a strafe flag is set. A saber swing before
+ * its link zeroes the same magnitudes: the swing's step velocity is written before the game's friction and the stick's
+ * accel added after it, so a held stick drifted him 1.7..3.7 units off the step; past the link the stick feeds again
+ * and the game's run request cuts the return. Its yaw is kept for ctl_yaw (each move of a combo its own). */
+void ctl_decode(uint32_t obj, uint32_t sp, uint32_t kind) {
+    decode(obj, sp, kind);
+    if (U32(obj + OBJ_NAME) != TAG_HUMN) return;
+    if (g_move_slow) {
+        SLOTF(sp, DEC_FWD_MAG) = slowed(SLOTF(sp, DEC_FWD_MAG));
+        if (SLOT16(sp, DEC_STRAFE_R) || SLOT16(sp, DEC_STRAFE_L))
+            SLOTF(sp, DEC_TURN_MAG) = slowed(SLOTF(sp, DEC_TURN_MAG));
+    }
+    int mv = saber_step(obj);
+    if (mv) {
+        if (mv != g_swing_mv) g_swing_yaw = F32(obj + K->yaw);
+        SLOTF(sp, DEC_FWD_MAG) = 0;
+        if (SLOT16(sp, DEC_STRAFE_R) || SLOT16(sp, DEC_STRAFE_L))
+            SLOTF(sp, DEC_TURN_MAG) = 0;
+    }
+    g_swing_mv = mv;
+}
+
 void ctl_yaw(uint32_t obj, uint32_t dt_bits, uint32_t kind) {
     if (g_hang_state && obj == g_player) { hang_hold(obj); return; }
     if (!g_active || obj != g_player || K != &KINDS[kind & 1]) return;
     union { uint32_t u; float f; } dt = { dt_bits };
     if (!(dt.f > 0.0001f)) return;
-    float err = wrap180(g_target_yaw - F32(obj + K->yaw));
+    float want = g_target_yaw;
+    if (g_swing_mv) {                                   /* a swing before its link: a little turn only */
+        float d = wrap180(g_target_yaw - g_swing_yaw);
+        if (d > SWING_TURN) d = SWING_TURN;
+        if (d < -SWING_TURN) d = -SWING_TURN;
+        want = g_swing_yaw + d;
+    }
+    float err = wrap180(want - F32(obj + K->yaw));
     float k = TURN_SPEED * dt.f;
     if (k > 1) k = 1;
     float step = err * k, lim = TURN_MAX_DPS * dt.f;

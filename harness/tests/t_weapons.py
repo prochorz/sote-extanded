@@ -3,7 +3,8 @@ fight running, every weapon given by the debug menu's "Get all stuff").
 
     M64CPU=0 python3 t_weapons.py <rom>
 
-Per weapon: reload the state, C-up to it, lock the AT-ST with Z, fire one shot and follow
+Per weapon: reload the state, R tapped (the state's Dash crouches, `crou`, and the stick alone never stands him
+up: with it he never walked and the 22-unit pulse cannon failed "got within range" on every build), C-up to it, lock the AT-ST with Z, fire one shot and follow
 the projectile (pulse cannon: class Expl, shooter at +0x88; seeker: class Misl, shooter at
 +0xA4). Checked: it passes within a few units of the cockpit (the lock's aim point, 0.9 of
 the boss's height) and the AT-ST's health (+0x5C4) drops. NOFIX=1 runs without the
@@ -31,6 +32,7 @@ FAR_NEAR = 10.0                   # from 55 units a blob bursts on the cockpit's
 WEAPONS = [('pulse cannon', 2, 1, 'Expl', 0x88, 22.0, 1, NEAR),
            ('pulse cannon far', 2, 1, 'Expl', 0x88, 1e9, 5, FAR_NEAR),
            ('seeker', 3, 3, 'Misl', 0xA4, 1e9, 1, NEAR)]
+STAND_UP = 10                     # frames before the weapon's C-up presses: R tapped (Dash stands up from the crouch)
 BOSS_HP = 0x5C4                   # AT-ST health (750 full)
 DAMAGE = 15                       # a cockpit hit takes ~60; a seeker on the legs took 3
 st = {'w': 0, 'base': 0, 'proj': 0, 'best': 1e9, 'seen': 0, 'fire': 0}
@@ -62,7 +64,9 @@ def script(e, n):
             code = (Path(paths.WORK) / 'main.bin').read_bytes()
             for a in FIX_HOOKS: e.w32(a, struct.unpack_from('>I', code, a - 0x80001EC0)[0])
     if n < st['base'] + 66: return
-    k = n - st['base'] - 66
+    if n < st['base'] + 66 + STAND_UP:            # the state's Dash crouches (crou: the debug teleport's landing) and
+        e.pad(BTN['R'] if n < st['base'] + 70 else 0, 0, 0); return   # the stick alone never stands him up: R does
+    k = n - st['base'] - 66 - STAND_UP
     pl = e.r32(S['g_player'])
     if pl: e.wf(pl + HUMN_HP, 100.0)
     b = BTN['CU'] if k < presses * 20 and k % 20 < 4 else 0
@@ -74,6 +78,9 @@ def script(e, n):
         d = math.hypot(e.rf(ob + 0x50) - e.rf(pl + 0x50), e.rf(ob + 0x54) - e.rf(pl + 0x54))
         if d > rng: y = 60
         else: st['fire'] = k
+        if os.environ.get('WEAPONS_LOG') and k % 20 == 0:
+            print(f'{k:4d} {name} walking: d {d:.1f} dash ({e.rf(pl + 0x50):.1f},{e.rf(pl + 0x54):.1f},{e.rf(pl + 0x58):.1f}) '
+                  f'boss ({e.rf(ob + 0x50):.1f},{e.rf(ob + 0x54):.1f}) lock {tag(e.r32(e.r32(S["g_lock"]))) if e.r32(S["g_lock"]) else "-"}', flush=True)
     f = st['fire'] or 10 ** 9
     if k == t0 + 40:
         lk = e.r32(S['g_lock'])
@@ -106,7 +113,8 @@ def script(e, n):
               f'closest {st["best"]:.1f} units over {st["seen"]} frames')
         check(f'{name}: the AT-ST takes damage', st['hp0'] - hp > DAMAGE, f'health {st["hp0"]:.1f} -> {hp:.1f}')
         st.update(w=st['w'] + 1, base=n, proj=0, best=1e9, seen=0, fire=0)
-    if k > t0 + 400: check(f'{name}: got within range', False); st.update(w=st['w'] + 1, base=n, fire=0)
+        e.pad(0, 0, 0); return
+    if k > t0 + 400 and not st['fire']: check(f'{name}: got within range', False)   # (fired: its follow-through ends it); st.update(w=st['w'] + 1, base=n, fire=0)
     e.pad(b, 0, y)
 
 

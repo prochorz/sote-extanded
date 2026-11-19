@@ -18,7 +18,7 @@
   - `local/docs/gall-chain.md` — the Gall Run in the story: Cut 05 reworked (lines, ships, Luke's picture),
     the end by the towers and the Falcon's jump, the last scene's hyperspace part (the Falcon, Leia's lines, Lando and
     Leia's picture), then Cut 06 (`gall_chain.c`).
-  - `local/docs/own-level.md` — the mission as a sub-level of its own (id 32, the game's tables grown to 33 entries).
+  - `local/docs/own-level.md` — the mission as a sub-level of its own (id 32, the game's tables grown to 34 entries).
   - `local/docs/cut05-frames.md` — Cut 05 as seven fixed frames (pictures with the button after 8 s, the scene's
     flight and space shots entered by writing its objects back: `harness/gallrun/c05_state.py` → `gall_c05.h`).
   - `local/docs/decisions.md` — frozen archive of the plans closed before 2026-10-24 (why, the numbers
@@ -34,14 +34,26 @@
   like Invincibility does the health, + a Ship row: Skyhook's ship, Outrider / X-Wing / TIE Fighter, the game's secret #2, + a Creature
   Cam row: what the profile name " Wampa  Stompa" gives, picked from the row in any preset: on foot Dash / Wampa /
   Trooper (the camera follows a creature), on Hoth Speeder / AT-ST (the first AT-ST on the D-pad), + a Friendly Wampas row: the game's secret #4
-  (a wampa that targets Dash calms down; the game gives it only for Jedi), its three checks answered yes; Reset cheats is the last row);
+  (a wampa that targets Dash calms down; the game gives it only for Jedi), its three checks answered yes; + a Look row: Dash / Guard / Luke, the on-foot player drawn with the red palace guard's meshes on his own
+  bones (drawn 0.30 lower: the armour's soles on the floor; hook `0x8007A134`, `guard_place`, scaled by how upright he is), on Luke with a head of ours instead of the helmet (`harness/luke/luke_model.py` → `luke_head.gltf`, its
+  face `face_src.png` from the figure's photo; the shared head code `harness/pose/head_model.py`) and his HUD portrait in Dash's (the HUD sprite slot 9; `harness/luke/luke_portrait.py`: Dash's record with
+  Luke's face from Cut 13's still inside the frame, from `local/game/cut13.bin`) (`guard.c`, its own
+  feature in `.cheats`, dropped by `--without cheats`; image `local/game/guard.bin` from
+  `harness/guard_asset.py`, the guard's 19 bone lists + the `LUKE` head list, appended to the ROM and copied to `0x80548000` by `_start`); Reset cheats is the last row;
+  - `saber.c` (feature `saber`, needs `guard`; its own section `.saber`, below): Luke's lightsaber while the Look is Luke:
+    weapon id 6 in the game's C-up cycle after the Stunner, held two-handed at his belt (the arm layer: our copies of his
+    movement blocks, `SAR2`), B the three-cut combo, held B the spin (a hop), damage through the game's hidden area shot,
+    enemy bolts from the front turned back with a parry pose (`PRY2`) and a flash, its own sounds in the game's bank;
+    the swings and tables from `harness/luke/saber_moves.py` (`--swing`, `--arm`, `--parry` checks), the model
+    `saber_model.py`, both into `guard.bin`; the sounds `local/game/saber_snd.bin` (`harness/saber/saber_snd.py`);
+    test `t_saber.py`;
   - the Gall Run: `gallrun.c` (+ `gall_scene.c`, `gall_fly.c`, `gall_story.c`, `gall_gun.c`, `gall_space.c`, `gall_native.c`, `gall_ties.c`, `gall_cam.c`, `gall_chain.c` (the story chain; `gall_final.h` made by `harness/gallrun/final_state.py`), internal header `gall.h`) + `falcon.c` (default features, in the release since 2026-10-24, the user; left out only by `build.py --without gallrun`, which drops `falcon` too; Cheats: Go to level 32, the Gall Run bonus mission; the Millennium Falcon model `local/game/falcon.bin`, made from the ship-model source's RAM by `harness/falcon_asset.py`, appended to the ROM after the payload and the cheats slot and copied to `0x80500000` by `_start`, is the player ship in the mission's level data; `falcon.c` (built with it) places its guns and engine glow:
   the base level rebuilt as the Falcon's canyon run — stage 1 a canyon (the player flies the Falcon in the canyon's corridor after Dash; TIEs come in at the end, Dash leaves), stage 2 open
   terrain (player shoots), an opening shot, radio lines; image `local/game/gall_run.bin` from `harness/gallrun/gall_asset.py`
   at `0x80628000`, the mission's own code (`gallrun.c`, `gall_*.c`) at `0x80600040` outside the payload; the mission's level: the base level's sub-level blob
-  `local/game/gall_level.bin` (`harness/level_blob.py` → `gall_level_stock.bin`, changed by `harness/gallrun/level_edit.py`), played as a sub-level of its own, id 32 (`LEVEL_GALL`; the game's sub-level tables moved to 33 entries in `gallrun.c`, the base level's own id never touched: `local/docs/own-level.md`); see `local/docs/gall-run.md`)
+  `local/game/gall_level.bin` (`harness/level_blob.py` → `gall_level_stock.bin`, changed by `harness/gallrun/level_edit.py`), played as a sub-level of its own, id 32 (`LEVEL_GALL`; the game's sub-level tables moved to 34 entries in `gallrun.c` (33 unused in this tree), the base level's own id never touched: `local/docs/own-level.md`); see `local/docs/gall-run.md`)
   (`build.py --without hang|train|cheats`; see the README's code section). Payload limit is 64 KB
-  (`PAYLOAD_SPACE`, code + data; `.bss` is NOLOAD after it, zeroed by `_start` and by `inject()`); `cheats.c` is not in it: its code and data are a section of their own (`.cheats`, `link.ld`) at `0x80540000`, in a fixed 32 KB ROM slot right after the payload's 64 KB (`CHEATS_SPACE`, zeros `--without cheats`), loaded by `_start` and copied by `inject()`; its `.bss` stays in the payload's. It is still built with `-Oz` and calls the game through absolute symbols (`GAME()` in it).
+  (`PAYLOAD_SPACE`, code + data; `.bss` is NOLOAD after it, zeroed by `_start` and by `inject()`); `cheats.c` is not in it: its code and data are a section of their own (`.cheats`, `link.ld`) at `0x80540000`, in a fixed 32 KB ROM slot right after the payload's 64 KB (`CHEATS_SPACE`, zeros `--without cheats`), loaded by `_start` and copied by `inject()`; its `.bss` stays in the payload's. It is still built with `-Oz` and calls the game through absolute symbols (`GAME()` in it). `saber.c` is not in it either: `.saber` at `0x805C0000`, a fixed 32 KB ROM slot (`SABER_SPACE`) as the ROM's last blob after the saber's sounds (none `--without saber`), loaded by `_start` after the cheats slot and copied by `inject()`; its `.bss` too (`.saber_bss` at `0x805C8000`, up to `0x80600000`, zeroed by both). Payload now ~50 KB of 64 KB, its `.bss` ends near `0x807D18B0` (the window stops at `0x807E0000`).
 - `sote-patch/docs/ledge-falls.md` — ledge guard (rolled back) and ledge hang (current): design, tuning, tests.
 - Build: `cd sote-patch && python3 build.py "../local/rom/Star Wars - Shadows of the Empire (USA) (Rev 2).z64"`.
   Release builds add `--md5-prefix 7DC1ECE7`: the ROM's MD5 then keeps starting with those digits, so
@@ -57,7 +69,7 @@
 - Git (`main`): code, docs, our own assets (pictures, portraits, sounds, routes). Everything local lives in the
   git-ignored `local/` (`harness/paths.py`; env `SOTE_LOCAL` moves it): `rom/` (the stock ROM, the `[SotE Extended]`
   ROM, the PC ISO), `states/` (savestates), `work/` (`main.bin`, one-off probes), `game/` (assets made from the ROM:
-  `falcon.bin`, `gall_run.bin`, `gall_level*.bin`, `hang.bin`), `build/` (`sote-patch/` the default build, other
+  `falcon.bin`, `guard.bin`, `palace.bin`, `gall_run.bin`, `gall_level*.bin`, `hang.bin`), `build/` (`sote-patch/` the default build, other
   `--out` dirs), `run/` (harness outputs), `bin/` (GLideN64, our dylibs), `demo/` (videos). Also ignored: `plans/`,
   `.venv`, `.deepcode/` (`.gitignore`).
 - Harness musts: `M64CPU=0` when injecting; parallel runs OK (own `SHOTS` dir each, no rebuild while
@@ -70,7 +82,7 @@
 - User's standing rules (kept here, not in an outside memory):
   - "Remember this" means: write it into the owning doc in this repo (this file, `docs/…`, a README, a module's header comment; the
     Gall Run's own docs: `local/docs/…`) and say which file.
-  - No names from other games anywhere in the project (file and function names, docs, comments, captions): describe a feature by what it does.
+  - No names from other games anywhere in the project (file and function names, docs, comments, captions), not even as the inspiration or the source of an idea: describe a feature by what it does (the user, 2026-11-07).
   - Never delete the SotE Extended showcase video (`local/demo/sote_showcase_*.mp4`) or its takes (`local/run/shots/vid_*`,
     `local/run/video/`); how it was made: skill `sote-video`, *The SotE Extended showcase* (the user, 2026-10-28).
   - Anything shared (videos, captions, descriptions, posts, thumbnails) and every tracked file never says what the Gall

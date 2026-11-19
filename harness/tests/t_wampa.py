@@ -12,7 +12,7 @@ D-pad of the current preset given as in Traditional (binding slots +0x08..+0x16 
 preset * 0x60). Elsewhere the row reads "(none)" and does nothing.
 
 cave (states/echo_cave.st, Dash's health held at 100: the cave's wampa would kill him): the row
-starts at Dash (object 0). Cheats, up three rows (wraps past Reset cheats and Friendly Wampas onto Creature Cam), R:
+starts at Dash (object 0). Cheats, up TO_ROW rows (wraps past Reset cheats, Guri, Look and Friendly Wampas onto Creature Cam), R:
 Wampa; within 10 VIs of resume the object is a Trop with +0x74 & 0xF == 2, still it 120 VIs later
 with nothing held, and the camera's eye (*0x800D08A4 + 0x44) nearer to it than to Dash (shot then).
 The D-pad drives it: within 2 VIs of the take (the object set) preset 0's slots +0x08..+0x16 are
@@ -32,7 +32,7 @@ and turns on +0x0C / +0x0E); stick y +60 held 120 VIs: state 2 on >= 100 frames;
 A: Wampa (kind 2); Reset cheats puts Dash back (0).
 
 hoth (states/lvl0.st, Battle of Hoth): the wave's alive count 0x800E1818 zeroed (wave 1, 2 ATST,
-starts); at VI 30, before the wave, Cheats, up three rows, A: AT-ST; preset 0's slots +0x08/+0x0A/
+starts); at VI 30, before the wave, Cheats, up TO_ROW rows, A: AT-ST; preset 0's slots +0x08/+0x0A/
 +0x0C/+0x0E are 0x0800/0x0400/0x0200/0x0100 (Traditional's D-pad) and +0x10..+0x16 0, the mode 1.
 Nothing on the D-pad then: while ATST 0 sleeps (+0x1C4 0) Trak 0's target (*0x80112F20 + 0x8C) is
 the speeder every frame; within 2 VIs of ATST 0 waking it is ATST 0 with +0x98 55.0 (the game's behind view),
@@ -92,6 +92,8 @@ ATST_REC, SPDR_REC = 0x80112DD8, 0x80112C88   # class records, first object at +
 WAVE_ALIVE = 0x800E1818
 HP = 0xB4                           # Humn health (float)
 ROW = 38
+N_ITEMS = 43                        # Cheats rows in the default build (Look and Guri after Friendly Wampas)
+TO_ROW = N_ITEMS - ROW              # ups from the top (it wraps) onto Creature Cam
 TROP = 0x54726F70
 TRAD = [0x0800, 0x0400, 0x0200, 0x0100, 0, 0, 0, 0]
 
@@ -176,7 +178,7 @@ def onfoot(k):
     if k == 0:
         st['start'] = snap()
         t = 140
-        open_cheats(); up(3); mark('at_row')
+        open_cheats(); up(TO_ROW); mark('at_row')
         st['pick'] = t
         if CASE == 'cave': press('R', 20); mark('picked')
         else: press('L', 20); mark('picked')
@@ -239,7 +241,7 @@ def onfoot(k):
                 mark('opened2'); st['pressL'] = t; press('L', 20); mark('dash')
             else:
                 press('A', 20); mark('a_dash'); press('A', 20); mark('a_wampa')
-                down(2); press('A', 20); mark('reset')
+                down(TO_ROW - 1); press('A', 20); mark('reset')
             st['u2_after'] = t
             resume()
     if st.get('pressL') is not None and k >= st['pressL'] and st.get('l0') is None and o == 0:
@@ -401,7 +403,7 @@ def hoth(k):
         st['pre'] = dict(keys=keys(), trak=tr, sp=sp, a0=a0, mode=e.r32(ATST), tl=tgt_list())
         print('pre', {x: (v if x in ('keys', 'tl') else '%08x' % v) for x, v in st['pre'].items()}, flush=True)
         t = 30
-        open_cheats(); up(3); mark('at_row')
+        open_cheats(); up(TO_ROW); mark('at_row')
         if CASE == 'hoth': press('A', 20)
         else: t += 20               # hoth_off: the same menu trip, the row left on Speeder
         mark('on')
@@ -496,7 +498,7 @@ def sky(k):
     if k == 0:
         st['sky0'] = snap()
         t = 20
-        open_cheats(); up(3); mark('sky_row'); press('A', 20); mark('sky_a')
+        open_cheats(); up(TO_ROW); mark('sky_row'); press('A', 20); mark('sky_a')
         st['sky_shot'] = t + 5
     if k == st.get('sky_shot'): e.shot()
     marks_at(k)
@@ -536,7 +538,7 @@ if CASE == 'hoth_off':
           and not st.get('pre_bad'), f"VI {d3['k']} (wake {st['wake']}) trak {d3['trak']:08x} state {d3['state']}")
 elif CASE == 'hoth':
     pre, on, off, af, d3 = st['pre'], m['on'], m['off'], st['after'], st['d3']
-    check('up three times from the top is the Creature Cam row', m['at_row']['row'] == ROW, f"row {m['at_row']['row']}")
+    check('up TO_ROW times from the top is the Creature Cam row', m['at_row']['row'] == ROW, f"row {m['at_row']['row']}")
     check('before: the AT-ST mode off, preset 0 has no D-pad in +0x08..+0x0E', pre['mode'] == 0
           and pre['keys'][:4] == [0, 0, 0, 0], f"{pre}")
     check('AT-ST: Traditional D-pad in preset 0, +0x10..+0x16 0, the mode 1', on['keys'] == TRAD and on['mode'] == 1
@@ -620,7 +622,7 @@ elif CASE == 'hoth':
 elif CASE == 'cave':
     a10, h = st['at10'], st['held']
     check('the state starts at Dash (no creature object)', st['start']['obj'] == 0, f"{st['start']}")
-    check('up three times from the top is the Creature Cam row', m['at_row']['row'] == ROW, f"row {m['at_row']['row']}")
+    check('up TO_ROW times from the top is the Creature Cam row', m['at_row']['row'] == ROW, f"row {m['at_row']['row']}")
     check('Wampa: 10 VIs after resume the object is a wampa Trop', a10['tag'] == TROP and a10['kind'] == 2,
           f"{a10['obj']:08x} kind {a10['kind']}")
     check('held: still it 120 VIs later, nothing held', h['obj'] == a10['obj'] and not st.get('lost'),

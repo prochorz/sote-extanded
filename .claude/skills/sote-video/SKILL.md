@@ -53,6 +53,14 @@ A take is a harness script that drives the pad, takes a screenshot every 2nd vid
   `tools/video/record_showcase.py` records the showcase takes (move, stairs, hang, atst) with audio;
   the trooper lock-on take is `bots/demo_route.py patch` trimmed by `showcase_lock_log.py`
   (Suprosa `sup.st` troopers stand behind a wall: no lock with the real line-of-sight check).
+  The Look row (Dash as the red palace guard, `palace.st`, `PAYLOAD_BUILD` a build with `guard`):
+  `tools/video/record_guard_take.py <rom> <out.json> look|cam|tour` (look: Dash runs, Cheats → Look → Guard, runs,
+  strafes, jumps, fires beside the real guards, Look back; cam: the Creature Cam on the red guard; tour: all sides)
+  and `tools/video/record_guard_turntable.py <rom> <out.json> real|dash|guri [VIs]` (the real guard, Dash or Guri
+  turning once round before a fixed camera, for comparing; `MOVE=1` in motion, on the stock ROM with the image put in
+  RAM, since with the patch the Creature Cam row takes the stick; `guri` dresses Trop 0 on the stock ROM, with
+  `GURI_PATCH=1` through the build's `g_guri_trop` instead; `DIST` / `CAM_DZ` frame it closer, `STILLS=n` shots only;
+  knobs in its docstring). Both compose with `compose_takes.py`.
 - Compose with `harness/.venv/bin/python3` (numpy + pillow); the system python has no numpy.
 - SendUserFile limit for the phone is 30 MB: send a CRF 24 copy as well.
 

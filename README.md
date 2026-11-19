@@ -1,7 +1,8 @@
 # SotE Extended
 
 A fan patch for **Star Wars: Shadows of the Empire** (Nintendo 64, USA, Rev 2): modern on-foot controls, Z
-lock-on, ledge grabbing, a Cheats menu in the pause screen, and a new bonus mission flown in the Millennium Falcon.
+lock-on, ledge grabbing, a Cheats menu in the pause screen, a new bonus mission flown in the Millennium Falcon, and
+Luke Skywalker with a lightsaber.
 
 No game data is included. You need your own copy of the game, and the patch is applied to it.
 
@@ -19,9 +20,14 @@ No game data is included. You need your own copy of the game, and the patch is a
   - Ship: Skyhook's ship variants;
   - Leebo Scanner: the top-down view;
   - Creature Cam: follow and drive a wampa, a trooper or an AT-ST;
-  - Friendly Wampas.
+  - Friendly Wampas;
+  - Look: Dash, a red palace guard, or Luke in the guard's armour with his own head and HUD portrait.
 
   Reset cheats puts everything back.
+- **Luke and his lightsaber.** With the Look on Luke, he jumps twice as high and has one more weapon after the
+  Stunner: a green lightsaber, held in both hands at his belt. B swings a three-cut combo, B held does a spinning
+  cut, and bolts from the front are turned back with a parry. The saber hums and has its own sounds; a cut fells a
+  trooper and three fell a wampa.
 - **Gall Run, a bonus mission.** Fly the Falcon through Gall's canyons behind the Outrider, then take the turret
   and fight the TIEs, with Dash, Lando and Chewie on the radio. It plays in the story on the way to Gall, and
   Cheats → Go to level starts it at any time.
@@ -57,7 +63,8 @@ Aim/Look button. In the Standard preset:
 | Stick | run where it points (camera-relative) |
 | Z | lock on the nearest enemy ahead; with none, aim as in the game |
 | Z + stick | strafe round the target, move closer or farther |
-| B | fire (at the target while locked) |
+| B | fire (at the target while locked); with the lightsaber: swing, held: the spin |
+| C-up | next weapon (on Luke the lightsaber comes after the Stunner) |
 | A | jump; on a ledge, stick up climbs |
 | START → Cheats | the Cheats menu: up / down pick, A runs, L / R change, B goes back |
 

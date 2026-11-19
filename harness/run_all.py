@@ -10,11 +10,14 @@ The ROM only boots the core: every test loads a savestate and injects the payloa
 PAYLOAD_BUILD (default local/build/sote-patch), so the original ROM is fine.
 Exit code 1 if any test failed.
 """
+import hashlib
 import argparse, fnmatch, os, re, subprocess, sys, time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import paths
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+_VENV = os.path.join(HERE, '..', '.venv', 'bin', 'python3')
+PY = _VENV if os.path.exists(_VENV) else sys.executable   # t_guard / t_melee need numpy (model_walk.py)
 ROM = paths.ROM
 SUITE = [
     ('move', 't_move.py'),
@@ -72,6 +75,18 @@ SUITE = [
     ('wampa_hoth', 't_wampa.py', 'hoth'),
     ('wampa_hoth_off', 't_wampa.py', 'hoth_off'),
     ('friendly', 't_friendly.py'),
+    ('guard', 't_guard.py'),
+    ('guard_portrait', 't_guard.py', 'portrait'),
+    ('saber_cycle', 't_saber.py', 'cycle'),
+    ('saber_snd', 't_saber.py', 'snd'),
+    ('saber_combo', 't_saber.py', 'combo'),
+    ('saber_spin', 't_saber.py', 'spin'),
+    ('saber_deflect', 't_saber.py', 'deflect'),
+    ('saber_boss', 't_saber.py', 'boss'),
+    ('saber_hold', 't_saber.py', 'hold'),
+    ('saber_flow', 't_saber.py', 'flow'),
+    ('saber_parry', 't_saber.py', 'parry'),
+    ('saber_fix', 't_saber.py', 'saber_fix'),
     ('friendly_off', 't_friendly.py', 'row_off'),
     ('off_controls', 't_off.py', 'controls'),
     ('off_lock', 't_off.py', 'lock'),
@@ -83,13 +98,22 @@ SLOW = {'hang_spots': 168, 'hang_jet': 117, 'hang_jumpcatch': 70, 'hang_dirs': 5
         'edge': 25, 'hang_cheat_lvl': 18}
 
 
+def duel_stale(rom):
+    """t_duel.py's state made by another ROM (or missing): its next run remakes it (DUEL_STATE, duel.st.md5)."""
+    st = os.path.join(paths.STATES, os.environ.get('DUEL_STATE', 'duel.st'))
+    built = os.path.join(os.environ.get('PAYLOAD_BUILD') or os.path.join(paths.BUILD, 'sote-patch'), 'sote-patch.z64')
+    rom = built if os.path.exists(built) else rom   # as t_duel.py picks it: the build's own ROM first
+    try: return open(st + '.md5').read() != hashlib.md5(open(rom, 'rb').read()).hexdigest()
+    except OSError: return True
+
+
 def run_one(rom, name, script, args, logs, timeout):
     log = os.path.join(logs, name + '.log')
     t0 = time.time()
     env = dict(os.environ, M64CPU='0', SHOTS='reg_' + name)
     with open(log, 'w') as f:
         try:
-            rc = subprocess.run([sys.executable, os.path.join('tests', script), rom, *args], cwd=HERE, env=env,
+            rc = subprocess.run([PY, os.path.join('tests', script), rom, *args], cwd=HERE, env=env,
                                 stdout=f, stderr=subprocess.STDOUT, timeout=timeout).returncode
         except subprocess.TimeoutExpired:
             rc = 'timeout'
@@ -120,6 +144,13 @@ def main():
     todo = [t for t in SUITE if not a.names or t[0] in a.names]
     todo.sort(key=lambda t: -SLOW.get(t[0], 15))
     t0, results = time.time(), []
+    first = [t for t in todo if t[0] == 'duel_1' and len([u for u in todo if u[0].startswith('duel_')]) > 1 and duel_stale(a.rom)]
+    for name, script, *args in first:            # the state remade once, before the other duel_* runs load it
+        name, ok, verdict, dt, fails = run_one(a.rom, name, script, args, logs, a.timeout)
+        print(f'{name:14s} {verdict:14s} {dt:5.0f} s', flush=True)
+        for x in fails: print(f'{"":14s}   - {x}')
+        results.append((name, ok))
+    todo = [t for t in todo if t not in first]
     with ThreadPoolExecutor(max_workers=a.jobs) as pool:
         futs = [pool.submit(run_one, a.rom, name, script, args, logs, a.timeout) for name, script, *args in todo]
         for fu in as_completed(futs):

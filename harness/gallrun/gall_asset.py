@@ -168,8 +168,8 @@ LEEBO_TURN = range(15, 24)       # the intro's (sub-level 0, states/src_intro.st
 INTRO_SPRITES = 0x8013CE2C        # (the scene's HUD sprite table pointer)
 HOTH_FRAMES = range(20, 28)        # Hoth's (states/src_portrait.st) HUD sprite slots: Luke in his helmet, 8 frames of interference
 HOTH_BOX = (1, 0, 42, 44)          # the picture in each (x0, y0, x1, y1): its grey frame left out
-# Chewie: gallrun/chewie.wav (16-bit mono 22050 Hz: Jedi Academy's sound/chars/chewbacca/07chw003.mp3
-# from assets0.pk3, loudness-normalised; neither version of SotE has a Wookiee), VADPCM, added to the sound bank (global,
+# Chewie: gallrun/chewie.wav (16-bit mono 22050 Hz, loudness-normalised; neither version of SotE has a Wookiee), VADPCM,
+# added to the sound bank (global,
 # BANKFILE) as sound CHEWIE after its 131 (one instrument; the slot after its sound list is free).
 CHEWIE_WAV = os.path.join(HERE, 'gallrun', 'chewie.wav')
 CHEWIE_GAIN = 2.5                 # chewie(): the roar this much louder, soft-limited (tanh)

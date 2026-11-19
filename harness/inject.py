@@ -2,8 +2,10 @@
 
 PAYLOAD_BUILD: directory with payload.elf / payload.bin (default: the controls patch build).
 Savestates hold the payload of whatever build they were made with. inject() copies
-payload.bin to 0x807C0000, zeroes its .bss (not in payload.bin), copies cheats.c's code, the Falcon model
-and the Gall Run image (features cheats, falcon, gallrun) and replays the hook table, so a state saved once
+payload.bin to 0x807C0000, zeroes its .bss (not in payload.bin), copies cheats.c's code, saber.c's code (and zeroes
+its .bss at 0x805C8000), the Falcon model,
+the Gall Run image, the guard image, the Guri image and the combo's image (features cheats, falcon, gallrun, guard,
+guri, melee) and replays the hook table, so a state saved once
 keeps working across rebuilds. Requires M64CPU=0: the dynarec and cached interpreter
 don't notice code written through the debugger memory pointer.
 A state saved with more features than the current build still has their hooks written into the
@@ -26,8 +28,12 @@ PAYLOAD_MAX = 0x807E0000              # tests put fake objects here (FAKE in tes
 MAIN_VRAM = 0x80001EC0
 FALCON_VRAM = 0x80500000            # build.py FALCON_VRAM
 CHEATS_CODE = 0x80540000            # build.py CHEATS_VRAM (link.ld .cheats)
+SABER_CODE = 0x805C0000             # build.py SABER_VRAM (link.ld .saber; its .bss .saber_bss after the 32 KB slot)
 GALL_CODE = 0x80600040                # build.py GALL_CODE
 GALL_VRAM = 0x80628000              # build.py GALL_VRAM
+GUARD_VRAM = 0x80548000             # build.py GUARD_VRAM
+GURI_VRAM = 0x80580000              # build.py GURI_VRAM
+MELEE_VRAM = 0x805A0000             # build.py MELEE_VRAM
 
 
 def all_hooks():
@@ -75,11 +81,34 @@ def inject(e, payload=True):
         code += bytes(-len(code) % 4)
         for i in range(0, len(code), 4):
             e.w32(CHEATS_CODE + i, struct.unpack_from('>I', code, i)[0])
+    sp = BUILD / 'sabercode.bin'          # absent in builds that had the saber in the payload: nothing to copy
+    if 'saber_frame' in s and sp.exists() and sp.stat().st_size:   # _start copies saber.c's code (link.ld .saber)
+        code = sp.read_bytes()                                       # and zeroes its .bss at boot
+        code += bytes(-len(code) % 4)
+        for i in range(0, len(code), 4):
+            e.w32(SABER_CODE + i, struct.unpack_from('>I', code, i)[0])
+        for i in range(s['_saber_bss_start'], s['_saber_bss_end'], 4):   # also clears what an old state left there
+            e.w32(i, 0)
     if 'falcon_frame' in s:               # the Falcon model
         img = (ASSETS / 'falcon.bin').read_bytes()
         img += bytes(-len(img) % 4)
         for i in range(0, len(img), 4):
             e.w32(FALCON_VRAM + i, struct.unpack_from('>I', img, i)[0])
+    if 'guard_frame' in s:                # the Look row's guard image (guard.c); env GUARD_BIN: another image
+        img = Path(os.environ.get('GUARD_BIN') or ASSETS / 'guard.bin').read_bytes()
+        img += bytes(-len(img) % 4)
+        for i in range(0, len(img), 4):
+            e.w32(GUARD_VRAM + i, struct.unpack_from('>I', img, i)[0])
+    if 'guri_frame' in s:                 # the Guri image (guri.c); env GURI_BIN: another image (a model's try)
+        img = Path(os.environ.get('GURI_BIN') or ASSETS / 'guri.bin').read_bytes()
+        img += bytes(-len(img) % 4)
+        for i in range(0, len(img), 4):
+            e.w32(GURI_VRAM + i, struct.unpack_from('>I', img, i)[0])
+    if 'melee_frame' in s:                # the combo's image (melee.c)
+        img = (ASSETS / 'melee.bin').read_bytes()
+        img += bytes(-len(img) % 4)
+        for i in range(0, len(img), 4):
+            e.w32(MELEE_VRAM + i, struct.unpack_from('>I', img, i)[0])
     if 'gallrun_frame' in s:              # and the Gall Run's code (link.ld .gall) and its image
         code = (BUILD / 'gallcode.bin').read_bytes()
         code += bytes(-len(code) % 4)
@@ -95,12 +124,17 @@ def inject(e, payload=True):
         for i in range(0, len(img), 4):
             e.w32(GALL_VRAM + i, struct.unpack_from('>I', img, i)[0])
     if 'gallrun_boot' in s:               # _start's gallrun_boot(): the sub-level tables' stock 32 entries into
-        L, X = s['g_levels'], s['g_level_index']   # g_levels (33: the Gall Run is 32), the level-index bytes too
+        L, X = s['g_levels'], s['g_level_index']   # g_levels (the Gall Run is 32), the level-index bytes too
+        n = 34 if 'own_queue' in s else 33    # 34 entries since the duel's id 33 (pack +0xC8, names +0x150)
+        PK, NM = 0x40 + 4 * n, 0x40 + 8 * n
         for i in range(16): e.w32(L + 4 * i, e.r32(0x80001330 + 4 * i))
         for i in range(32):
             e.w32(L + 0x40 + 4 * i, e.r32(0x80001370 + 4 * i))
-            e.w32(L + 0xC4 + 4 * i, e.r32(0x800013F0 + 4 * i))
-            for k in range(16): e.w32(L + 0x148 + 64 * i + 4 * k, e.r32(0x80001470 + 64 * i + 4 * k))
+            e.w32(L + PK + 4 * i, e.r32(0x800013F0 + 4 * i))
+            for k in range(16): e.w32(L + NM + 64 * i + 4 * k, e.r32(0x80001470 + 64 * i + 4 * k))
+        if 'duel_frame' in s and not e.r32(L + 0x40 + 4 * 33):   # the duel's 33: its own blob is in the image's
+            # g_levels (build.py's DUEL_LEVEL); builds before it copied sub-level 26's ROM entry and pack word at boot
+            e.w32(L + 0x40 + 4 * 33, e.r32(0x80001370 + 4 * 26)); e.w32(L + PK + 4 * 33, e.r32(0x800013F0 + 4 * 26))
         for i in range(0, 32, 4): e.w32(X + i, e.r32(0x800DD77C + i))
     a = s['hook_table']                   # (address, instruction) pairs, 0-terminated
     while (addr := e.r32(a)):

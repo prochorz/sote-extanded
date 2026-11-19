@@ -13,7 +13,8 @@
  * - cheats_draw: after the game's pause screen (0x8001FC90).
  * - Our rows besides the game's: the patch's toggles on top; Jetpack Fuel, Ship, Leebo Scanner and
  *   Creature Cam (what the " Wampa  Stompa" name gives, picked from the row: the camera on a wampa /
- *   a trooper on foot, the AT-ST walked from the snowspeeder on Hoth); Reset cheats last.
+ *   a trooper on foot, the AT-ST walked from the snowspeeder on Hoth), Friendly Wampas, Look (Dash or the red
+ *   palace guard, guard.c); Reset cheats last. (Guri and her combo, melee.c, live only on the duel, duel.c.)
  *
  * Built with -Oz (payload space). Game functions and variables are absolute symbols (GAME
  * below), not casts of integer constants: calls become a plain jal and loads lui+lw.
@@ -78,7 +79,7 @@ GAME(gm_god_bike, 0x800E18AC);      extern volatile uint32_t gm_god_bike;      /
 #define TAG_BIKE        0x42696B65u
 #define DIE_CAUSE       0x49742400u /* "It$" */
 
-enum { ACT, ACT_PLAY, TOG, VAL_F, VAL_S, PERSP, VEC, LVL, SHIP, CREAT };
+enum { ACT, ACT_PLAY, TOG, VAL_F, VAL_S, PERSP, VEC, LVL, SHIP, CREAT, LOOK };
 
 /* Names come from the game's own list, see name_text(). Per kind:
  * VAL_F / PERSP: float at addr, a..b in steps of c, all in 1/20;
@@ -136,6 +137,9 @@ static const struct item ITEMS[] = {
     { TOG,      40, 0, 1, 0, 0 },                     /* ours: Leebo Scanner (secret #1: top-down view) */
     { CREAT,    43 },                                 /* ours: Creature Cam (Dash / Wampa / Trooper, Speeder / AT-ST) */
     { TOG,      44, 0, 1, 0, 0 },                     /* ours: Friendly Wampas (secret #4, cheats_secret4) */
+#if FEATURE_GUARD
+    { LOOK,     45 },                                 /* ours: Look, Dash / Guard / Luke (guard.c) */
+#endif
     { ACT,      34 },                                 /* ours: Reset cheats, undo every setting changed here; stays last */
 };
 #define N_ITEMS ((int)(sizeof ITEMS / sizeof ITEMS[0]))
@@ -143,10 +147,13 @@ static const struct item ITEMS[] = {
 #define ROW(id) (OURS + ((id) < 9 ? (id) : (id) < 17 ? (id) - 1 : (id) - 2))  /* row of a game entry (Prev
                                                                         * Level, 9, and Screen Resolution, 17, are gone) */
 #if FEATURE_GALLRUN
-/* Go to level: the 33 sub-levels of the Gall code's table (gallrun.c g_levels, names at +0x148; 32 = the Gall Run). */
+/* Go to level: the sub-levels of the Gall code's table (gallrun.c g_levels, 34 entries, names at +0x150; 32 = the
+ * Gall Run, 33 = the duel, listed with feature duel). Both own ids are started by their own queue (own_queue). */
 extern char g_levels[];
-#define N_LEVELS 33
-#define LEVEL_NAMES ((const char (*)[64])(g_levels + 0x148))
+#define LEVEL_GALL 32            /* (gall.h) */
+#define LEVEL_DUEL 33            /* (gall.h) */
+#define N_LEVELS (33 + FEATURE_DUEL)
+#define LEVEL_NAMES ((const char (*)[64])(g_levels + 0x150))
 #define LEVEL_FROM(l) ((unsigned)(l) < N_LEVELS ? (l) : (l) & 31)
 #else
 #define N_LEVELS 32
@@ -610,19 +617,25 @@ void cheats_pad(void) {
     if (g_atst_on && hoth()) { atst_pad(c); return; }
     atst_free();
     tgt_back();
-    if (!U32(CREATURE_OBJ) || !find(TAG_HUMN)) return;
     uint32_t a = PAD_RAW + c * 6;
     volatile int8_t *raw = (volatile int8_t *)a;
-    uint16_t b = U16(a), d = 0;
-    if (raw[3] > STICK_GO) d |= 0x0800;
-    if (raw[2] < -STICK_GO) d |= 0x0200;
-    if (raw[2] > STICK_GO) d |= 0x0100;
-    if (b & 0x4000) d |= 0x0400;
-    U16(a) = (b & ~0xC000) | d;
-    raw[2] = 0; raw[3] = 0;
+    if (U32(CREATURE_OBJ) && find(TAG_HUMN)) {
+        uint16_t b = U16(a), d = 0;
+        if (raw[3] > STICK_GO) d |= 0x0800;
+        if (raw[2] < -STICK_GO) d |= 0x0200;
+        if (raw[2] > STICK_GO) d |= 0x0100;
+        if (b & 0x4000) d |= 0x0400;
+        U16(a) = (b & ~0xC000) | d;
+        raw[2] = 0; raw[3] = 0;
+    }
+    melee_pad((uint16_t *)a, (int8_t *)&raw[2], (int8_t *)&raw[3]);   /* Guri holding him: his input taken */
 }
 
 void cheats_frame(void) {
+    guard_frame();
+    saber_frame();
+    guri_frame();
+    melee_frame();
     atst_method(g_atst_on && hoth());
     if (g_atst_on && hoth()) { U32(ATST_MODE) = 1; keys_set(); atst_cam(); }
     else if (find(TAG_HUMN) && U32(CREATURE_OBJ)) keys_set();   /* the followed creature reads +0x08..+0x0E */
@@ -647,7 +660,15 @@ void cheats_frame(void) {
 #define HUD_BLUE_A      0x80
 GAME(gm_hud_pos, 0x80111110);       extern volatile int16_t gm_hud_pos[]; /* x, y per element */
 
+/* The saber's (saber.c): the ammo text (element 0x19 at 290, 188, updater 0x8006A3F0) would print weapon 6's slot,
+ * the Humn's clock; drawn with alpha 0 while the saber is out. */
+#define HUD_AMMO        0x19
+#define HUD_AMMO_X      290
+#define HUD_AMMO_Y      188
+
 void cheats_hud_col(uint32_t *a, uint32_t *alpha) {   /* a = { id, r, g, b } */
+    if ((int16_t)a[0] == HUD_AMMO && gm_hud_pos[2 * HUD_AMMO] == HUD_AMMO_X && gm_hud_pos[2 * HUD_AMMO + 1] == HUD_AMMO_Y
+        && saber_out()) { *alpha = 0; return; }
     if (!g_fuel_on || (int16_t)a[0] != HUD_FUEL) return;
     if (gm_hud_pos[2 * HUD_FUEL] != HUD_FUEL_X || gm_hud_pos[2 * HUD_FUEL + 1] != HUD_FUEL_Y) return;
     a[1] = HUD_BLUE_RG; a[2] = HUD_BLUE_RG; a[3] = HUD_BLUE_B;
@@ -711,7 +732,9 @@ static void vec_turn(uint32_t a, int dyaw, int dpitch) {
 }
 
 /* Reset: each setting's value before its first change here (actions like 50 Lives are not
- * undone). View settings (perspective, fog, light) belong to the level they were changed in. */
+ * undone). View settings (perspective, fog, light) belong to the level they were changed in. Jump Power is saved and
+ * restored in Dash's basis (guard.c's Luke factor taken out), so a reset that also puts the Look back on Dash does not
+ * divide it again. */
 static int32_t g_orig[N_ITEMS][2];
 static uint8_t g_saved[N_ITEMS];
 static int32_t g_orig_view = -1;  /* gm_view_override before the first view change */
@@ -730,9 +753,19 @@ static void record(const struct item *it) {
     case VAL_S: g_orig[i][0] = S16(it->addr); break;
     case SHIP:  g_orig[i][0] = gm_ship; break;
     case CREAT: g_orig[i][0] = creat_get(); break;
+#if FEATURE_GUARD
+    case LOOK:  g_orig[i][0] = g_guard_on; break;
+#endif
     case VEC:   g_orig[i][1] = S16(it->addr + 4);  /* fall through: x, y as one word */
     default:    g_orig[i][0] = U32(it->addr); break;
     }
+#if FEATURE_GUARD
+    if (it->addr == JUMP_POWER && g_jump_luke) {   /* saved in Dash's basis: jump() multiplies on Luke */
+        union { int32_t i; float f; } v = { g_orig[i][0] };
+        v.f /= LUKE_JUMP;
+        g_orig[i][0] = v.i;
+    }
+#endif
     if (is_view(it) && g_orig_view < 0) {
         g_orig_view = gm_view_override;
         g_orig_level = gm_level;
@@ -755,10 +788,17 @@ static void reset_all(void) {
         case TOG:   if (tog_get(it) != o) tog_flip(it); break;
         case VAL_S: S16(it->addr) = o; fog_rgb_use(it, o); break;
         case SHIP:  if (ship_group()) ship_set(o); break;
+#if FEATURE_GUARD
+        case LOOK:  g_guard_on = o; break;
+#endif
         case CREAT: if (g_atst_on && o != C_ATST) atst_set(0);    /* the keys back too */
                     if (o != C_NONE && creat_get() != o) creat_set(o); break;
         case VEC:   S16(it->addr + 4) = g_orig[i][1];  /* fall through */
-        default:    U32(it->addr) = o; break;
+        default:    U32(it->addr) = o;
+#if FEATURE_GUARD
+                    if (it->addr == JUMP_POWER) g_jump_luke = 0;   /* Dash's basis now: jump() rescales for the Look */
+#endif
+                    break;
         }
     }
     if (g_orig_view >= 0) gm_view_override = same ? g_orig_view : 0;
@@ -794,6 +834,9 @@ static void adjust(const struct item *it, int dir, int big) {
     case VEC: for (int i = big ? 3 : 1; i; i--) vec_turn(it->addr, dir, 0); break;
     case SHIP: ship_set((gm_ship + dir + 3) % 3); break;
     case CREAT: creat_step(dir); break;
+#if FEATURE_GUARD
+    case LOOK: g_guard_on = (g_guard_on + dir + 3) % 3; break;   /* 0 Dash, 1 Guard, 2 Luke */
+#endif
     }
 }
 
@@ -822,7 +865,10 @@ static void run(const struct item *it) {
         break;
     case 7:
 #if FEATURE_GALLRUN
-        if (g_lvl == N_LEVELS - 1) { gallrun_start(); break; }
+        if (g_lvl == LEVEL_GALL) { gallrun_start(); break; }
+#endif
+#if FEATURE_DUEL
+        if (g_lvl == LEVEL_DUEL) { duel_start(); break; }
 #endif
         gm_level_load(g_lvl); break;
     case 8: gm_level_load(gm_level); break;
@@ -867,7 +913,7 @@ static void screen_input(uint32_t h) {
     }
     if (pressed & 1u << B_A) {
         if (it->kind == ACT || it->kind == ACT_PLAY || it->kind == LVL) run(it);
-        else if (it->kind == TOG || it->kind == SHIP || it->kind == CREAT) adjust(it, 1, 0);
+        else if (it->kind == TOG || it->kind == SHIP || it->kind == CREAT || it->kind == LOOK) adjust(it, 1, 0);
         sfx();
         if (it->kind == ACT_PLAY || it->kind == LVL) g_swallow = 1;
     }
@@ -967,6 +1013,7 @@ static void name_text(const struct item *it) {
                     : it->id == 42 ? "Ship"
                     : it->id == 43 ? "Creature Cam"
                     : it->id == 44 ? "Friendly Wampas"
+                    : it->id == 45 ? "Look"
                     : gm_debug_names[it->id];
     char *d = g_buf;
     *d++ = '~'; *d++ = 's';
@@ -981,6 +1028,9 @@ static void value_text(const struct item *it) {
     g_buf[0] = 0;
     switch (it->kind) {
     case TOG:   SPF("~s%s", tog_get(it) ? "ON" : "OFF"); break;
+#if FEATURE_GUARD
+    case LOOK:  SPF("~s%s", g_guard_on == 2 ? "Luke" : g_guard_on ? "Guard" : "Dash"); break;
+#endif
     case VAL_F: fmt_fixed(F32(it->addr)); break;
     case PERSP: if (it->id == 19) fmt_fixed(F32(it->addr));
                 else SPF("~s%d", (int)F32(it->addr)); break;

@@ -220,31 +220,39 @@ static void hang_anim_pose(const int16_t *a, const int16_t *b, float u) {
 
 static int in_block(uint32_t w, uint32_t b) { return w >= b && w < b + ANIM_BLOCK_SIZE; }
 
-/* Copy Dash's flyy block into hang_block with our tracks; 0 if his skeleton isn't the one
- * the pose was made for. */
-static int hang_anim_build(uint32_t flyy) {
-    uint32_t dst = (uint32_t)hang_block;
+/* A block of Dash's (src) copied into dst (ANIM_BLOCK_SIZE bytes) as block `tag` of `keys` keys whose tracks are ours:
+ * the tracks src has (bit k of mask[bone]: track_slot[k]; any other layout fails) in order, `keys` floats each from
+ * `tracks`. 0 if his skeleton isn't the one the tracks were made for. mask 0: every track kept as src's (a copy the
+ * caller then changes). Shared with saber.c (its swings, copies of `shoo`; its arm over his movement blocks, mask 0):
+ * the hang's are two-key copies of `flyy`. */
+int anim_clone(uint32_t src, uint32_t *dst, uint32_t tag, int keys, const float *tracks, const uint8_t *mask) {
+    uint32_t d = (uint32_t)dst;
     for (int i = 0; i < ANIM_BLOCK_SIZE / 4; i++) {
-        uint32_t w = U32(flyy + 4 * i);
-        hang_block[i] = in_block(w, flyy) ? w - flyy + dst : w;   /* pointers inside the block */
+        uint32_t w = U32(src + 4 * i);
+        dst[i] = in_block(w, src) ? w - src + d : w;    /* pointers inside the block */
     }
-    U32(dst + 0x1C) = TAG_HANG;
-    U32(dst + 0x14) = 0;
-    F32(dst + 0x2C) = 2.0f;                         /* two frames, both the pose */
-    U32(dst + 0x30) = 2;
-    uint32_t e = dst + 0x38;
-    float (*track)[2] = hang_tracks;
+    U32(d + 0x1C) = tag;
+    U32(d + 0x14) = 0;
+    F32(d + 0x2C) = (float)keys;
+    U32(d + 0x30) = keys;
+    uint32_t e = d + 0x38;
     for (int b = 0; b < ANIM_BONES; b++, e += 0xA0) {
-        if (!in_block(e, dst) || (b < ANIM_BONES - 1 && U32(e + 0x0C) != e + 0xA0)) return 0;
-        for (int k = 0; k < 6; k++) {
+        if (!in_block(e, d) || (b < ANIM_BONES - 1 && U32(e + 0x0C) != e + 0xA0)) return 0;
+        for (int k = 0; k < 6 && mask; k++) {
             int has = valid_ptr(U32(e + track_slot[k]));
-            if (has != ((track_mask[b] >> k) & 1)) return 0;
+            if (has != ((mask[b] >> k) & 1)) return 0;
             if (!has) continue;
-            U32(e + track_slot[k]) = (uint32_t)*track++;
+            U32(e + track_slot[k]) = (uint32_t)tracks;
+            tracks += keys;
         }
     }
     if (U32(e - 0xA0 + 0x0C)) return 0;             /* more bones than expected */
     return 1;
+}
+
+/* Copy Dash's flyy block into hang_block with our tracks (two frames, both the pose). */
+static int hang_anim_build(uint32_t flyy) {
+    return anim_clone(flyy, hang_block, TAG_HANG, 2, &hang_tracks[0][0], track_mask);
 }
 
 /* Put "hang" at the head of Dash's animation chain; 0: use the flyy frame instead. */
@@ -1144,5 +1152,8 @@ void ctl_setanim(uint32_t *a) {
         hang_anims[0].start = own ? 1.0f : HANG_FRAME;
         a[0] = g_hang_state == 2 && !own ? CLIMB_ANIM_ID : HANG_ANIM_ID; a[2] = (uint32_t)&hang_ctrl;
     }
-    else if (a[2] != (uint32_t)&hang_ctrl) g_game_anim_ctrl = a[2];
+    else {
+        if (a[2] != (uint32_t)&hang_ctrl) g_game_anim_ctrl = a[2];
+        saber_setanim(a);                           /* the saber's press, its refused aim pose (saber.c) */
+    }
 }

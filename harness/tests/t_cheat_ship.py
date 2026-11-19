@@ -3,7 +3,7 @@ TIE Fighter) and reads the game's own counter (s16 0x800E1B20).
 
     M64CPU=0 python3 t_cheat_ship.py <rom> [state]        (default sky.st, Skyhook)
 
-sky.st: opens Cheats, wraps up five rows onto Ship, R (X-Wing), resumes: the Stft draw copies the
+sky.st: opens Cheats, wraps up N_ITEMS - ROW_SHIP rows onto Ship, R (X-Wing), resumes: the Stft draw copies the
 counter into the model's variant group (+0x14). Pauses again: R (TIE), L (X-Wing), A (TIE), R wraps
 to the Outrider, A (X-Wing). This Level: the ship's init resets the counter, the row shows it (0).
 R twice, Reset cheats: the counter is back to its value before the first change. Then 300 frames of
@@ -24,6 +24,8 @@ SKY = NAME == 'sky.st'
 
 PAUSED, SHIP = 0x800DD2BC, 0x800E1B20
 ROW_SHIP = 36
+THIS_LEVEL = 12
+N_ITEMS = 42                        # Cheats rows in the default build (Look after Friendly Wampas)
 
 seq, marks = [], {}
 t = 20
@@ -55,7 +57,7 @@ def resume():
 
 
 open_cheats(); mark('opened')
-up(5); mark('at_ship')
+up(N_ITEMS - ROW_SHIP); mark('at_ship')
 press('R', 20); mark('r1')
 if SKY:
     resume(); t += 40; mark('resumed')
@@ -65,12 +67,12 @@ if SKY:
     press('A', 20); mark('a2')
     press('R', 20); mark('wrap0')
     press('A', 20); mark('a1')
-    down(17); mark('at_this_level')
+    down(N_ITEMS - ROW_SHIP + THIS_LEVEL); mark('at_this_level')
     press('A', 20); t += 900; mark('reloaded')
     open_cheats(); mark('opened3')
-    down(24); mark('at_ship2')
+    down(ROW_SHIP - THIS_LEVEL); mark('at_ship2')
     press('R', 20); press('R', 20); mark('r2b')
-    down(4); press('A', 20); mark('reset')
+    down(N_ITEMS - 1 - ROW_SHIP); press('A', 20); mark('reset')
     resume(); t += 300; mark('played')
 else:
     press('A', 20); mark('a_any')
@@ -116,7 +118,7 @@ def script(e, n):
     if k == END:
         q = st
         check('cheats screen opens', q['opened']['open'] == 1 and q['opened']['paused'] == 1)
-        check('up five times from the top is the Ship row', q['at_ship']['row'] == ROW_SHIP, f"row {q['at_ship']['row']}")
+        check(f'up {N_ITEMS - ROW_SHIP} times from the top is the Ship row', q['at_ship']['row'] == ROW_SHIP, f"row {q['at_ship']['row']}")
         if SKY:
             check('stock start: Outrider, variant 0', q['start']['ship'] == 0 and q['start']['sel'] == 0, f"{q['start']}")
             check('R: X-Wing (1)', q['r1']['ship'] == 1, f"{q['r1']['ship']}")
